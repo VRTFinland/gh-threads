@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -76,13 +77,17 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 			comment := thread.Comments[commentIdx]
 			header := formatCommentHeader(comment.Author, comment.CreatedAt, comment.URL, colour)
 			printMultiline(w, "        - ", "          ", header)
-			lines := renderCommentBody(comment.Body, opts.Markdown, width)
-			for _, line := range lines {
-				printMultiline(w, "          ", "          ", line)
+			hasSnippet := comment.Snippet != nil && len(comment.Snippet.Lines) > 0
+			shouldRenderBody := !(commentIdx == 0 && hasSnippet)
+			if shouldRenderBody {
+				lines := renderCommentBody(comment.Body, opts.Markdown, width)
+				for _, line := range lines {
+					printMultiline(w, "          ", "          ", line)
+				}
 			}
 
 			if commentIdx == 0 {
-				snippetShown := printHistoricalSnippet(w, comment.Snippet, colour, opts.Width, comment.Body)
+				snippetShown := printHistoricalSnippet(w, comment.Snippet, colour, opts.Width, comment, opts.Markdown)
 				if opts.ShowDiff && !snippetShown {
 					diffLines := formatDiff(comment.DiffHunk, colour, comment.Line, comment.OriginalLine)
 					if len(diffLines) > 0 {
@@ -150,9 +155,26 @@ func renderCommentBody(body string, markdown bool, width int) []string {
 		glamour.WithWordWrap(wrap),
 	)
 	if err != nil {
+		renderer, err = glamour.NewTermRenderer(
+			glamour.WithStandardStyle("notty"),
+			glamour.WithWordWrap(wrap),
+		)
+	}
+	if err != nil {
 		return strings.Split(body, "\n")
 	}
 	out, err := renderer.Render(body)
+	if err != nil {
+		if fallbackRenderer, fallbackErr := glamour.NewTermRenderer(
+			glamour.WithStandardStyle("notty"),
+			glamour.WithWordWrap(wrap),
+		); fallbackErr == nil {
+			if fallback, fallbackRenderErr := fallbackRenderer.Render(body); fallbackRenderErr == nil {
+				out = fallback
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		return strings.Split(body, "\n")
 	}
@@ -163,19 +185,122 @@ func renderCommentBody(body string, markdown bool, width int) []string {
 	return lines
 }
 
+func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool, markdown bool) string {
+	matches := suggestionBlockRegexp.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) == 0 {
+		return body
+	}
+
+	var builder strings.Builder
+	last := 0
+	for _, match := range matches {
+		builder.WriteString(body[last:match[0]])
+		content := body[match[2]:match[3]]
+		if replacement := renderSuggestionDiff(content, snippet, startLine, endLine, colour, markdown); replacement != "" {
+			builder.WriteString(replacement)
+		} else {
+			builder.WriteString(body[match[0]:match[1]])
+		}
+		last = match[1]
+	}
+	builder.WriteString(body[last:])
+
+	return builder.String()
+}
+
+func renderSuggestionDiff(content string, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool, markdown bool) string {
+	start, end, ok := normalizeLineRange(startLine, endLine)
+	if !ok {
+		return ""
+	}
+	original := snippetLinesForRange(snippet, start, end)
+	if len(original) == 0 {
+		return ""
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	content = strings.TrimSuffix(content, "\n")
+	suggestion := strings.Split(content, "\n")
+	diffLines := formatSuggestionDiff(original, suggestion, colour, markdown)
+	if len(diffLines) == 0 {
+		return ""
+	}
+	if markdown {
+		return fmt.Sprintf("```diff\n%s\n```", strings.Join(diffLines, "\n"))
+	}
+	return strings.Join(diffLines, "\n")
+}
+
+func formatSuggestionDiff(original, suggestion []string, colour bool, markdown bool) []string {
+	formatted := make([]string, 0, len(original)+len(suggestion))
+	for _, line := range original {
+		formatted = append(formatted, formatSuggestionLine("-", line, colour, markdown))
+	}
+	for _, line := range suggestion {
+		formatted = append(formatted, formatSuggestionLine("+", line, colour, markdown))
+	}
+	return formatted
+}
+
+func formatSuggestionLine(prefix, line string, colour bool, markdown bool) string {
+	text := fmt.Sprintf("%s %s", prefix, line)
+	if markdown {
+		return text
+	}
+
+	switch prefix {
+	case "-":
+		return red.apply(text, colour)
+	case "+":
+		return green.apply(text, colour)
+	default:
+		return text
+	}
+}
+
+func snippetLinesForRange(snippet *threads.HistoricalSnippet, start, end int) []string {
+	if snippet == nil || len(snippet.Lines) == 0 {
+		return nil
+	}
+	snippetStart := snippet.StartLine
+	snippetEnd := snippet.StartLine + len(snippet.Lines) - 1
+	if start < snippetStart || end > snippetEnd {
+		return nil
+	}
+	startIdx := start - snippetStart
+	endIdx := end - snippetStart
+	lines := make([]string, endIdx-startIdx+1)
+	copy(lines, snippet.Lines[startIdx:endIdx+1])
+	return lines
+}
+
+func normalizeLineRange(start, end *int) (int, int, bool) {
+	if start == nil || end == nil {
+		return 0, 0, false
+	}
+	startVal := *start
+	endVal := *end
+	if startVal > endVal {
+		startVal, endVal = endVal, startVal
+	}
+	return startVal, endVal, true
+}
+
 type diffEntry struct {
 	line      string
 	highlight bool
 }
 
-func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, colour bool, width int, commentBody string) bool {
+func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, colour bool, width int, comment threads.ThreadComment, markdown bool) bool {
 	if snippet == nil || len(snippet.Lines) == 0 {
 		return false
 	}
+	startLine, endLine := commentLineRange(comment)
 	commit := snippet.Commit
 	if len(commit) > 7 {
 		commit = commit[:7]
 	}
+	fmt.Fprintln(w)
 	header := fmt.Sprintf("          Code at %s @ %s:", snippet.Path, commit)
 	fmt.Fprintln(w, grey.apply(header, colour))
 	for idx, line := range snippet.Lines {
@@ -184,7 +309,7 @@ func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, col
 		content := emphasize(line, colour, isHighlight)
 		fmt.Fprintf(w, "            %5d  %s\n", lineNo, content)
 		if isHighlight {
-			printCommentBlock(w, commentBody, width, colour)
+			printCommentBlock(w, comment.Body, width, colour, markdown, snippet, startLine, endLine)
 		}
 	}
 	return true
@@ -261,6 +386,23 @@ func formatDiff(diff string, colour bool, newLine, oldLine *int) []string {
 		out[i] = entry.line
 	}
 	return out
+}
+
+func commentLineRange(comment threads.ThreadComment) (*int, *int) {
+	end := firstNonNil(comment.OriginalLine, comment.Line)
+	start := end
+	if comment.StartLine != nil {
+		start = comment.StartLine
+	}
+	if start == nil || end == nil {
+		return nil, nil
+	}
+	startVal := *start
+	endVal := *end
+	if startVal > endVal {
+		startVal, endVal = endVal, startVal
+	}
+	return &startVal, &endVal
 }
 
 func trimAroundHighlights(entries []diffEntry, hasTarget bool) []diffEntry {
@@ -351,63 +493,69 @@ func (c colouriser) apply(text string, enabled bool) string {
 }
 
 var (
-	bold    = colouriser{code: "1"}
-	cyan    = colouriser{code: "36"}
-	magenta = colouriser{code: "35"}
-	yellow  = colouriser{code: "33"}
-	blue    = colouriser{code: "34"}
-	green   = colouriser{code: "32"}
-	red     = colouriser{code: "31"}
-	grey    = colouriser{code: "90"}
+	bold      = colouriser{code: "1"}
+	cyan      = colouriser{code: "36"}
+	magenta   = colouriser{code: "35"}
+	yellow    = colouriser{code: "33"}
+	blue      = colouriser{code: "34"}
+	green     = colouriser{code: "32"}
+	red       = colouriser{code: "31"}
+	grey      = colouriser{code: "90"}
+	darkGreen = colouriser{code: "32"}
 )
 
-const (
-	snippetCommentBackground = "\x1b[48;5;238m\x1b[97m"
-	ansiReset                = "\x1b[0m"
-)
-
-func printCommentBlock(w io.Writer, body string, width int, colour bool) {
+func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, startLine, endLine *int) {
 	blockWidth := clamp(width-12, 40, 120)
-	margin := 2
-	innerWidth := blockWidth - margin*2
+	innerWidth := blockWidth - 4
 	if innerWidth < 10 {
 		innerWidth = blockWidth
-		margin = 0
 	}
 
-	lines := wrapCommentSnippetLines(body, innerWidth)
+	lines := compactSnippetLines(renderCommentSnippet(body, markdown, innerWidth, snippet, startLine, endLine, colour))
 	if len(lines) == 0 {
 		return
 	}
 
-	formatLine := func(content string) string {
-		padding := strings.Repeat(" ", margin)
-		return padding + padRight(content, innerWidth) + padding
-	}
-
-	printBackgroundLine := func(content string) {
-		formatted := formatLine(content)
+	border := "┌" + strings.Repeat("─", innerWidth+2) + "┐"
+	bottom := "└" + strings.Repeat("─", innerWidth+2) + "┘"
+	borderColour := func(text string) string {
 		if colour {
-			fmt.Fprintf(w, "            %s%s%s\n", snippetCommentBackground, formatted, ansiReset)
-		} else {
-			fmt.Fprintf(w, "            [comment] %s\n", formatted)
+			return darkGreen.apply(text, true)
 		}
+		return text
+	}
+	left := "│"
+	right := "│"
+	if colour {
+		left = darkGreen.apply(left, true)
+		right = darkGreen.apply(right, true)
 	}
 
-	printBackgroundLine("")
+	fmt.Fprintf(w, "            %s\n", borderColour(border))
 	for _, line := range lines {
-		printBackgroundLine(line)
+		content := padRightVisible(line, innerWidth)
+		fmt.Fprintf(w, "            %s %s %s\n", left, content, right)
 	}
-	printBackgroundLine("")
+	fmt.Fprintf(w, "            %s\n", borderColour(bottom))
 }
 
-func wrapCommentSnippetLines(body string, limit int) []string {
+func renderCommentSnippet(body string, markdown bool, width int, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool) []string {
 	body = strings.ReplaceAll(body, "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\r", "\n")
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil
 	}
+
+	resolvedBody := replaceSuggestionBlocks(body, snippet, startLine, endLine, colour, markdown)
+	if !markdown {
+		return wrapCommentSnippetLines(resolvedBody, width)
+	}
+
+	return renderCommentBody(resolvedBody, markdown, width+12)
+}
+
+func wrapCommentSnippetLines(body string, limit int) []string {
 	if limit <= 0 {
 		limit = 60
 	}
@@ -460,6 +608,8 @@ func wrapPlainLine(line string, limit int) []string {
 	return result
 }
 
+var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
+
 func padRight(text string, width int) string {
 	if width <= 0 {
 		return text
@@ -469,4 +619,28 @@ func padRight(text string, width int) string {
 		return text
 	}
 	return text + strings.Repeat(" ", width-length)
+}
+
+var ansiEscapeRegexp = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func padRightVisible(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	visible := utf8.RuneCountInString(ansiEscapeRegexp.ReplaceAllString(text, ""))
+	if visible >= width {
+		return text
+	}
+	return text + strings.Repeat(" ", width-visible)
+}
+
+func compactSnippetLines(lines []string) []string {
+	var result []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		result = append(result, line)
+	}
+	return result
 }

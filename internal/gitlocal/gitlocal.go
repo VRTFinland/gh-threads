@@ -46,7 +46,7 @@ func (r *Repo) FileLines(ctx context.Context, commit, path string) ([]string, er
 		return nil, errors.New("local repository unavailable")
 	}
 	expr := fmt.Sprintf("%s:%s", commit, path)
-	output, err := run(ctx, "show", expr)
+	output, err := runRaw(ctx, "show", expr)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +101,14 @@ func isGitHubHost(host string) bool {
 }
 
 func run(ctx context.Context, args ...string) (string, error) {
+	output, err := runRaw(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(output), nil
+}
+
+func runRaw(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -113,7 +121,7 @@ func run(ctx context.Context, args ...string) (string, error) {
 		}
 		return "", errors.New(msg)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 func HasGitHubOrigin(ctx context.Context) bool {
