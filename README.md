@@ -7,13 +7,13 @@
 You get the intended experience by installing the extension directly from GitHub:
 
 ```bash
-gh extension install VRTFinland/github-pr-threads
+gh extension install VRTFinland/gh-threads
 ```
 
 After installation the command is available as `gh threads …`. Update anytime with:
 
 ```bash
-gh extension upgrade VRTFinland/github-pr-threads
+gh extension upgrade VRTFinland/gh-threads
 ```
 
 > Prerequisites: `gh` must already be authenticated (`gh auth status`) and Go 1.25+ is needed only if you plan on building from source.
