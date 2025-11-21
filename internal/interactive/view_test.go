@@ -12,7 +12,7 @@ import (
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
 
-func TestRenderDetailCollapsedShowsFirstCommentOnly(t *testing.T) {
+func TestRenderDetailCollapsedKeepsFirstCommentVisible(t *testing.T) {
 	thread := threads.ReviewThread{
 		ThreadID: "t1",
 		Path:     "file.go",
@@ -29,11 +29,32 @@ func TestRenderDetailCollapsedShowsFirstCommentOnly(t *testing.T) {
 		detailMode:      detailSnippet,
 	}
 	out := renderDetailContent(model, 5)
-	if !strings.Contains(out, "first") {
-		t.Fatalf("expected first comment to be shown: %s", out)
+	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
+		t.Fatalf("expected first and second comments to be shown: %s", out)
 	}
-	if strings.Contains(out, "second") || strings.Contains(out, "third") {
-		t.Fatalf("collapsed view should not show later comments: %s", out)
+}
+
+func TestRenderDetailCollapsedShowsSelectedComment(t *testing.T) {
+	thread := threads.ReviewThread{
+		ThreadID: "t1",
+		Path:     "file.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "alice", Body: "first"},
+			{ID: "c2", Author: "bob", Body: "second"},
+			{ID: "c3", Author: "carol", Body: "third"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		selectedComment: 2,
+		detailExpanded:  false,
+		detailMode:      detailSnippet,
+	}
+	out := stripANSI(renderDetailContent(model, 5))
+	if !strings.Contains(out, "third") || !strings.Contains(out, "first") {
+		t.Fatalf("expected first and selected comment to be shown, got %s", out)
 	}
 }
 
@@ -73,6 +94,54 @@ func TestRenderDetailExpandedRespectsHeightWindow(t *testing.T) {
 	}
 }
 
+func TestRenderDetailKeepsSelectionInBounds(t *testing.T) {
+	comments := []threads.ThreadComment{
+		{ID: "c1", Body: "first"},
+		{ID: "c2", Body: "second"},
+		{ID: "c3", Body: "third"},
+	}
+	thread := threads.ReviewThread{
+		ThreadID: "t-window",
+		Path:     "file.go",
+		Comments: comments,
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		selectedComment: 2,
+		detailExpanded:  true,
+		detailMode:      detailSnippet,
+	}
+	out := renderDetailContent(model, 8)
+	if !strings.Contains(out, "third") {
+		t.Fatalf("expected selected final comment to be rendered, got %s", out)
+	}
+}
+
+func TestRenderDetailHighlightsSelectionMarker(t *testing.T) {
+	thread := threads.ReviewThread{
+		ThreadID: "t-marker",
+		Path:     "file.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "alice", Body: "first"},
+			{ID: "c2", Author: "bob", Body: "second"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		selectedComment: 1,
+		detailExpanded:  true,
+		detailMode:      detailSnippet,
+	}
+	out := stripANSI(renderDetailContent(model, 10))
+	if !strings.Contains(out, ">   bob at") {
+		t.Fatalf("expected selection marker before selected comment, got %q", out)
+	}
+}
+
 func TestRenderDetailShowsSnippetOnlyForFirstComment(t *testing.T) {
 	firstSnippet := &threads.HistoricalSnippet{
 		Path:          "main.go",
@@ -107,6 +176,33 @@ func TestRenderDetailShowsSnippetOnlyForFirstComment(t *testing.T) {
 	}
 	if strings.Contains(out, "second snippet line") {
 		t.Fatalf("second snippet should not be rendered: %s", out)
+	}
+}
+
+func TestRenderDetailShowsSnippetEvenInDiffMode(t *testing.T) {
+	snippet := &threads.HistoricalSnippet{
+		Path:          "foo.go",
+		StartLine:     30,
+		HighlightLine: 31,
+		Lines:         []string{"snippet body"},
+	}
+	thread := threads.ReviewThread{
+		ThreadID: "snippet-diff",
+		Path:     "foo.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "alice", Body: "first", Snippet: snippet, DiffHunk: "@@ -1,1 +1,1 @@"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		detailExpanded:  true,
+		detailMode:      detailDiff,
+	}
+	out := stripANSI(renderDetailContent(model, 10))
+	if !strings.Contains(out, "snippet body") {
+		t.Fatalf("expected snippet to remain visible in diff mode, got %s", out)
 	}
 }
 
@@ -207,6 +303,35 @@ func TestRenderBottomBarSurvivesAnsiTruncate(t *testing.T) {
 	}
 	if got := lipgloss.Width(stripANSI(truncated)); got != width {
 		t.Fatalf("expected truncated width %d, got %d", width, got)
+	}
+}
+
+func TestRenderAuthorSuggestionsHighlightsSelection(t *testing.T) {
+	names := []string{"alice", "bob", "carol"}
+	out := renderAuthorSuggestions(names, 1)
+	if strings.Count(out, ">") != 1 {
+		t.Fatalf("expected exactly one highlighted suggestion, got %q", out)
+	}
+	if !strings.Contains(out, "> bob") {
+		t.Fatalf("expected bob to be highlighted, got %q", out)
+	}
+	if strings.Contains(out, "> alice") || strings.Contains(out, "> carol") {
+		t.Fatalf("unexpected highlights in %q", out)
+	}
+}
+
+func TestRenderStatusSuggestionsHighlightsSelection(t *testing.T) {
+	options := []statusOption{
+		{label: "all"},
+		{label: "resolved"},
+		{label: "unresolved"},
+	}
+	out := renderStatusSuggestions(options, 2)
+	if !strings.Contains(out, "> unresolved") {
+		t.Fatalf("expected unresolved to be highlighted, got %q", out)
+	}
+	if strings.Count(out, ">") != 1 {
+		t.Fatalf("expected only one highlight, got %q", out)
 	}
 }
 

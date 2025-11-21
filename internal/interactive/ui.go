@@ -10,6 +10,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const authorSuggestionLimit = 6
+
+var statusOptions = []statusOption{
+	{label: "all", filter: threads.StatusAll},
+	{label: "resolved", filter: threads.StatusResolved},
+	{label: "unresolved", filter: threads.StatusUnresolved},
+}
+
+type statusOption struct {
+	label  string
+	filter threads.StatusFilter
+}
+
 type ProgramConfig struct {
 	Conversation []threads.ConversationComment
 	Threads      []threads.ReviewThread
@@ -31,15 +44,18 @@ type teaModel struct {
 	cfg   ProgramConfig
 	state Model
 
-	input          textinput.Model
-	inputPurpose   string // "reply", "filter", "author"
-	statusIndex    int
-	showStatus     bool
-	showFilterMenu bool
-	filterIndex    int
-	loading        bool
-	viewportHeight int
-	viewportWidth  int
+	input                 textinput.Model
+	inputPurpose          string // "reply", "filter", "author"
+	statusIndex           int
+	showStatus            bool
+	showHelp              bool
+	showFilterMenu        bool
+	filterIndex           int
+	authorSuggestionIndex int
+	statusSuggestionIndex int
+	loading               bool
+	viewportHeight        int
+	viewportWidth         int
 }
 
 func newTeaModel(m Model, cfg ProgramConfig) *teaModel {
@@ -50,11 +66,13 @@ func newTeaModel(m Model, cfg ProgramConfig) *teaModel {
 	listHeight, _ := sectionHeights(defaultHeight)
 	m.SetListWindowSize(listHeight)
 	return &teaModel{
-		cfg:            cfg,
-		state:          m,
-		input:          ti,
-		viewportHeight: defaultHeight,
-		viewportWidth:  80,
+		cfg:                   cfg,
+		state:                 m,
+		input:                 ti,
+		authorSuggestionIndex: -1,
+		statusSuggestionIndex: -1,
+		viewportHeight:        defaultHeight,
+		viewportWidth:         80,
 	}
 }
 
@@ -78,6 +96,8 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateStatus(msg)
 		case StateFilterMenu:
 			return m.updateFilterMenu(msg)
+		case StateHelp:
+			return m.updateHelp(msg)
 		default:
 			return m.updateView(msg)
 		}
@@ -138,6 +158,9 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state.detailMode = detailSnippet
 		}
+	case "?":
+		m.showHelp = true
+		m.state.state = StateHelp
 	case "h", "left":
 		if m.state.selectedComment > 0 {
 			m.state.selectedComment--
@@ -169,22 +192,23 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.state = StateStatus
 		}
 	case "s":
-		m.showFilterMenu = true
-		switch m.state.filters.Status {
-		case threads.StatusResolved:
-			m.filterIndex = 1
-		case threads.StatusUnresolved:
-			m.filterIndex = 2
-		default:
-			m.filterIndex = 0
-		}
-		m.state.state = StateFilterMenu
+		m.state.errMessage = ""
+		m.state.state = StateFilter
+		m.inputPurpose = "status"
+		m.input.Placeholder = "Filter by status (all/resolved/unresolved)"
+		m.input.SetValue("")
+		m.authorSuggestionIndex = -1
+		m.statusSuggestionIndex = -1
+		m.input.Focus()
+		return m, textinput.Blink
 	case "/":
 		m.state.errMessage = ""
 		m.state.state = StateFilter
 		m.inputPurpose = "text"
 		m.input.Placeholder = "Filter by text"
 		m.input.SetValue(m.state.filters.Text)
+		m.authorSuggestionIndex = -1
+		m.statusSuggestionIndex = -1
 		m.input.Focus()
 		return m, textinput.Blink
 	case "a":
@@ -192,7 +216,9 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state.state = StateFilter
 		m.inputPurpose = "author"
 		m.input.Placeholder = "Filter by author"
-		m.input.SetValue(m.state.filters.Author)
+		m.input.SetValue("")
+		m.authorSuggestionIndex = -1
+		m.statusSuggestionIndex = -1
 		m.input.Focus()
 		return m, textinput.Blink
 	case "f":
@@ -233,19 +259,129 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.state.state = StateView
 		return m, nil
+	case "down", "tab":
+		if m.inputPurpose == "author" && m.cycleAuthorSuggestion(1) {
+			return m, nil
+		}
+		if m.inputPurpose == "status" && m.cycleStatusSuggestion(1) {
+			return m, nil
+		}
+	case "up", "shift+tab":
+		if m.inputPurpose == "author" && m.cycleAuthorSuggestion(-1) {
+			return m, nil
+		}
+		if m.inputPurpose == "status" && m.cycleStatusSuggestion(-1) {
+			return m, nil
+		}
 	case "enter":
 		value := m.input.Value()
-		if m.inputPurpose == "author" {
+		switch m.inputPurpose {
+		case "author":
+			suggestions := m.state.AuthorSuggestions(value, authorSuggestionLimit)
+			switch {
+			case m.authorSuggestionIndex >= 0 && m.authorSuggestionIndex < len(suggestions):
+				value = suggestions[m.authorSuggestionIndex]
+				m.input.SetValue(value)
+			case len(suggestions) == 1:
+				value = suggestions[0]
+				m.input.SetValue(value)
+			}
 			m.state.SetFilterAuthor(value)
-		} else {
+			m.authorSuggestionIndex = -1
+		case "status":
+			filter, chosen := m.chooseStatusFilter(value)
+			if chosen {
+				m.state.filters.Status = filter
+				m.statusSuggestionIndex = -1
+				m.state.applyFilters()
+			}
+		default:
 			m.state.SetFilterText(value)
 		}
 		m.state.state = StateView
 		return m, nil
 	}
 	var cmd tea.Cmd
+	prev := m.input.Value()
 	m.input, cmd = m.input.Update(msg)
+	if m.inputPurpose == "author" && m.input.Value() != prev {
+		m.authorSuggestionIndex = -1
+	}
+	if m.inputPurpose == "status" && m.input.Value() != prev {
+		m.statusSuggestionIndex = -1
+	}
 	return m, cmd
+}
+
+func (m *teaModel) cycleAuthorSuggestion(delta int) bool {
+	suggestions := m.state.AuthorSuggestions(m.input.Value(), authorSuggestionLimit)
+	if len(suggestions) == 0 {
+		m.authorSuggestionIndex = -1
+		return false
+	}
+	if m.authorSuggestionIndex == -1 {
+		if delta > 0 {
+			m.authorSuggestionIndex = 0
+		} else {
+			m.authorSuggestionIndex = len(suggestions) - 1
+		}
+		return true
+	}
+	m.authorSuggestionIndex = (m.authorSuggestionIndex + delta + len(suggestions)) % len(suggestions)
+	return true
+}
+
+func (m *teaModel) cycleStatusSuggestion(delta int) bool {
+	suggestions := statusSuggestions(m.input.Value())
+	if len(suggestions) == 0 {
+		m.statusSuggestionIndex = -1
+		return false
+	}
+	if m.statusSuggestionIndex == -1 {
+		if delta > 0 {
+			m.statusSuggestionIndex = 0
+		} else {
+			m.statusSuggestionIndex = len(suggestions) - 1
+		}
+		return true
+	}
+	m.statusSuggestionIndex = (m.statusSuggestionIndex + delta + len(suggestions)) % len(suggestions)
+	return true
+}
+
+func (m *teaModel) chooseStatusFilter(value string) (threads.StatusFilter, bool) {
+	suggestions := statusSuggestions(value)
+	if m.statusSuggestionIndex >= 0 && m.statusSuggestionIndex < len(suggestions) {
+		return suggestions[m.statusSuggestionIndex].filter, true
+	}
+	if len(suggestions) == 1 {
+		return suggestions[0].filter, true
+	}
+	return parseStatusInput(value)
+}
+
+func statusSuggestions(query string) []statusOption {
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]statusOption, 0, len(statusOptions))
+	for _, option := range statusOptions {
+		if query == "" || strings.HasPrefix(option.label, query) {
+			matches = append(matches, option)
+		}
+	}
+	return matches
+}
+
+func parseStatusInput(value string) (threads.StatusFilter, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "u", "unresolved":
+		return threads.StatusUnresolved, true
+	case "r", "resolved":
+		return threads.StatusResolved, true
+	case "a", "all":
+		return threads.StatusAll, true
+	default:
+		return "", false
+	}
 }
 
 func (m *teaModel) updateStatus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -304,6 +440,17 @@ func (m *teaModel) updateFilterMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *teaModel) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		m.showHelp = false
+		m.state.state = StateView
+		return m, nil
+	}
+}
+
 func (m *teaModel) View() string {
 	if m.loading {
 		return "Loading..."
@@ -318,7 +465,7 @@ func (m *teaModel) View() string {
 	}
 	listHeight, detailHeight := sectionHeights(height)
 	m.state.SetListWindowSize(listHeight)
-	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.state.state, m.input, m.inputPurpose)
+	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.showHelp, m.state.state, m.input, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
 }
 
 type replyFinished struct{ err error }

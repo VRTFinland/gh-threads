@@ -21,6 +21,7 @@ import (
 var (
 	threadHighlightStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Background(lipgloss.Color("29"))
 	commentHighlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("232")).Bold(true).PaddingLeft(2)
+	selectedMarkerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	normalStyle           = lipgloss.NewStyle()
 	topBarStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("22")).Bold(true).Padding(0, 1)
 	bottomBarStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("232")).Background(lipgloss.Color("253"))
@@ -35,6 +36,9 @@ var (
 	sweepScreenSeq        = "\x1b[0J"
 	lineNumberStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	lineNumberHighlight   = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+	helpTitleStyle        = lipgloss.NewStyle().Bold(true)
+	helpKeyStyle          = lipgloss.NewStyle().Bold(true)
+	helpBoxStyle          = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder())
 	snippetRendererOnce   sync.Once
 	snippetRenderer       *glamour.TermRenderer
 	snippetRendererErr    error
@@ -43,7 +47,7 @@ var (
 	markdownRendererErr   error
 )
 
-func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, currentState State, input textinput.Model, inputPurpose string) string {
+func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, currentState State, input textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if height <= 0 {
 		height = 60
 	}
@@ -60,7 +64,7 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	b.WriteString("\n")
 	b.WriteString(renderDivider(width))
 	b.WriteString("\n")
-	detail := renderDetailBlock(state, detailHeight, width, currentState, input, inputPurpose, showStatus, statusIndex, showFilter, filterIndex)
+	detail := renderDetailBlock(state, detailHeight, width, currentState, input, inputPurpose, showStatus, statusIndex, showFilter, filterIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
 	b.WriteString(detail)
 	b.WriteString("\n")
 	b.WriteString(renderBottomBar(state, width))
@@ -92,7 +96,10 @@ func renderThreadList(state Model, height int, width int) string {
 	return normalizeBlock(b.String(), width, height)
 }
 
-func renderDetailBlock(state Model, height int, width int, currentState State, input textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int) string {
+func renderDetailBlock(state Model, height int, width int, currentState State, input textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
+	if showHelp {
+		return centerBlock(renderHelp(width), width, height)
+	}
 	sections := make([]string, 0, 4)
 	sections = append(sections, renderDetailContent(state, height))
 
@@ -105,8 +112,13 @@ func renderDetailBlock(state Model, height int, width int, currentState State, i
 		sections = append(sections, input.View())
 	}
 	if currentState == StateFilter && inputPurpose == "author" {
-		if suggestions := state.AuthorSuggestions(input.Value(), 6); len(suggestions) > 0 {
-			sections = append(sections, renderAuthorSuggestions(suggestions))
+		if suggestions := state.AuthorSuggestions(input.Value(), authorSuggestionLimit); len(suggestions) > 0 {
+			sections = append(sections, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
+		}
+	}
+	if currentState == StateFilter && inputPurpose == "status" {
+		if suggestions := statusSuggestions(input.Value()); len(suggestions) > 0 {
+			sections = append(sections, renderStatusSuggestions(suggestions, statusSuggestionIndex))
 		}
 	}
 	if showStatus {
@@ -144,22 +156,17 @@ func renderDetailContent(state Model, maxHeight int) string {
 
 	maxComments := vmax(1, maxHeight/6)
 	if !state.detailExpanded {
-		maxComments = 1
+		maxComments = vmin(len(thread.Comments), vmax(3, maxComments))
 	}
 	if maxComments > len(thread.Comments) {
 		maxComments = len(thread.Comments)
 	}
+	selected := clamp(state.selectedComment, 0, len(thread.Comments)-1)
 	start := 0
-	if state.detailExpanded && len(thread.Comments) > maxComments {
-		start = state.selectedComment - maxComments/2
-		if start < 0 {
-			start = 0
-		}
-		if start+maxComments > len(thread.Comments) {
-			start = len(thread.Comments) - maxComments
-		}
+	if selected >= maxComments {
+		start = selected - maxComments + 1
 	}
-	end := start + maxComments
+	end := vmin(len(thread.Comments), start+maxComments)
 
 	for i := start; i < end; i++ {
 		comment := thread.Comments[i]
@@ -167,9 +174,15 @@ func renderDetailContent(state Model, maxHeight int) string {
 		if comment.URL != "" {
 			header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 		}
+		marker := "  "
 		if i == state.selectedComment {
+			marker = selectedMarkerStyle.Render("> ")
+		}
+		if i == state.selectedComment {
+			b.WriteString(marker)
 			b.WriteString(commentHighlightStyle.Render(header))
 		} else {
+			b.WriteString(marker)
 			b.WriteString(commentHeaderStyle.Render(header))
 		}
 		b.WriteString("\n")
@@ -180,7 +193,7 @@ func renderDetailContent(state Model, maxHeight int) string {
 		}
 		b.WriteString("\n")
 		insertBlankAfterSnippet := false
-		if state.detailMode == detailSnippet && comment.Snippet != nil && i == 0 {
+		if comment.Snippet != nil && i == 0 {
 			snippetLines := snippetDisplayLines(comment.Snippet)
 			for offset, line := range snippetLines {
 				lineNo := comment.Snippet.StartLine + offset
@@ -193,12 +206,17 @@ func renderDetailContent(state Model, maxHeight int) string {
 				b.WriteString(fmt.Sprintf("%s %s  %s\n", marker, lineLabel, line))
 			}
 			insertBlankAfterSnippet = true
-		} else if state.detailMode == detailDiff && comment.DiffHunk != "" {
+		}
+		if state.detailMode == detailDiff && comment.DiffHunk != "" {
+			if insertBlankAfterSnippet {
+				b.WriteString("\n")
+			}
 			diffLines := formatDiffHunk(comment.DiffHunk, comment.Line, comment.OriginalLine)
 			for _, line := range diffLines {
 				b.WriteString(line)
 				b.WriteString("\n")
 			}
+			insertBlankAfterSnippet = true
 		}
 		if insertBlankAfterSnippet && i < end-1 {
 			b.WriteString("\n")
@@ -274,16 +292,125 @@ func renderFilterPicker(index int) string {
 	return b.String()
 }
 
-func renderAuthorSuggestions(matches []string) string {
+func renderAuthorSuggestions(matches []string, selected int) string {
 	if len(matches) == 0 {
 		return ""
 	}
+	if selected >= len(matches) {
+		selected = -1
+	}
 	var b strings.Builder
 	b.WriteString("Matching authors:\n")
-	for _, name := range matches {
-		b.WriteString("  " + name + "\n")
+	for idx, name := range matches {
+		prefix := "  "
+		if idx == selected {
+			prefix = "> "
+		}
+		b.WriteString(prefix + name + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderStatusSuggestions(matches []statusOption, selected int) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	if selected >= len(matches) {
+		selected = -1
+	}
+	var b strings.Builder
+	b.WriteString("Statuses:\n")
+	for idx, option := range matches {
+		prefix := "  "
+		if idx == selected {
+			prefix = "> "
+		}
+		b.WriteString(prefix + option.label + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderHelp(width int) string {
+	type helpEntry struct {
+		keys     []string
+		desc     string
+		boldKeys bool
+	}
+	entries := []helpEntry{
+		{keys: []string{"j", "k", "↑", "↓"}, desc: "Move between threads", boldKeys: false},
+		{keys: []string{"h", "←"}, desc: "Previous comment", boldKeys: true},
+		{keys: []string{"l", "→"}, desc: "Next comment", boldKeys: true},
+		{keys: []string{"enter", "space"}, desc: "Toggle detail", boldKeys: true},
+		{keys: []string{"d"}, desc: "Toggle diff view", boldKeys: true},
+		{keys: []string{"/"}, desc: "Text filter", boldKeys: true},
+		{keys: []string{"a"}, desc: "Author filter", boldKeys: true},
+		{keys: []string{"s"}, desc: "Status filter (a/r/u)", boldKeys: true},
+		{keys: []string{"f"}, desc: "Cycle status filter", boldKeys: true},
+		{keys: []string{"r"}, desc: "Reply to selected comment", boldKeys: true},
+		{keys: []string{"S"}, desc: "Set resolved/unresolved", boldKeys: true},
+		{keys: []string{"R"}, desc: "Refresh data", boldKeys: true},
+		{keys: []string{"?"}, desc: "Close help / show help", boldKeys: true},
+		{keys: []string{"q", "ctrl+c"}, desc: "Quit", boldKeys: true},
+	}
+
+	var b strings.Builder
+	b.WriteString(helpTitleStyle.Render("Help / Keybindings"))
+	b.WriteString("\n\n")
+	for idx, entry := range entries {
+		keyParts := make([]string, len(entry.keys))
+		for i, key := range entry.keys {
+			if entry.boldKeys {
+				keyParts[i] = helpKeyStyle.Render(key)
+			} else {
+				keyParts[i] = key
+			}
+		}
+		line := fmt.Sprintf("%-18s %s", strings.Join(keyParts, " / "), entry.desc)
+		b.WriteString(line)
+		if idx != len(entries)-1 {
+			b.WriteString("\n")
+		}
+	}
+	content := b.String()
+	boxWidth := vmax(30, vmin(width-4, maxLineWidth(content)+4))
+	return helpBoxStyle.Width(boxWidth).Render(content)
+}
+
+func maxLineWidth(text string) int {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	maxWidth := 0
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	return maxWidth
+}
+
+func centerBlock(text string, width int, height int) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	blockHeight := len(lines)
+	topPadding := 0
+	if height > blockHeight {
+		topPadding = (height - blockHeight) / 2
+	}
+	for i := 0; i < topPadding; i++ {
+		lines = append([]string{""}, lines...)
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		lineWidth := lipgloss.Width(line)
+		leftPad := 0
+		if width > lineWidth {
+			leftPad = (width - lineWidth) / 2
+		}
+		padded := strings.Repeat(" ", leftPad) + line
+		lines[i] = padOrTrim(padded, width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func firstNonNilString(values ...*int) string {

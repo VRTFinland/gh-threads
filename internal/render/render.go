@@ -87,8 +87,8 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 			}
 
 			if commentIdx == 0 {
-				snippetShown := printHistoricalSnippet(w, comment.Snippet, colour, opts.Width, comment, opts.Markdown)
-				if opts.ShowDiff && !snippetShown {
+				printHistoricalSnippet(w, comment.Snippet, colour, opts.Width, comment, opts.Markdown)
+				if opts.ShowDiff {
 					diffLines := formatDiff(comment.DiffHunk, colour, comment.Line, comment.OriginalLine)
 					if len(diffLines) > 0 {
 						fmt.Fprintln(w, grey.apply("          Diff:", colour))

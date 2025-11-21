@@ -131,10 +131,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	service := threads.NewService(a.client, localRepo, cacheManager, a.errOut)
 
-	includeHistory := showDiff
-	if format == outputJSON {
-		includeHistory = true
-	}
+	includeHistory := true
 
 	conversationComments, reviewThreads, err := service.FetchData(ctx, ghContext, includeHistory, *refreshCacheFlag)
 	if err != nil {

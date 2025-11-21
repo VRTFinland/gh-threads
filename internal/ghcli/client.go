@@ -18,6 +18,19 @@ func NewClient() *Client {
 	return &Client{}
 }
 
+const blobQuery = `
+query($owner: String!, $repo: String!, $expression: String!) {
+  repository(owner: $owner, name: $repo) {
+    object(expression: $expression) {
+      __typename
+      ... on Blob {
+        text
+      }
+    }
+  }
+}
+`
+
 func (c *Client) EnsureAvailable() error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return errors.New("GitHub CLI (gh) is required but not installed or not in PATH")
@@ -124,6 +137,40 @@ func (c *Client) FetchBlob(ctx context.Context, owner, repo, sha string) (*Blob,
 	return &blob, nil
 }
 
+func (c *Client) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
+	if owner == "" || repo == "" || commit == "" || path == "" {
+		return nil, errors.New("missing owner, repo, commit, or path")
+	}
+	data := blobData{}
+	expression := fmt.Sprintf("%s:%s", commit, path)
+	variables := map[string]string{
+		"owner":      owner,
+		"repo":       repo,
+		"expression": expression,
+	}
+	if err := c.CallGraphQL(ctx, blobQuery, variables, &data); err != nil {
+		if isNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	text := data.Repository.Object.Text
+	if text == "" {
+		return nil, nil
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Split(text, "\n"), nil
+}
+
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "404") || strings.Contains(msg, "not found")
+}
+
 func (c *Client) HasIssueCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error) {
 	if since == "" {
 		return true, nil
@@ -209,6 +256,14 @@ type Blob struct {
 type PullRequestSummary struct {
 	Number int    `json:"number"`
 	State  string `json:"state"`
+}
+
+type blobData struct {
+	Repository struct {
+		Object struct {
+			Text string `json:"text"`
+		} `json:"object"`
+	} `json:"repository"`
 }
 
 func (c *Client) ListOpenPullRequestsByHead(ctx context.Context, owner, repo, branch string) ([]PullRequestSummary, error) {

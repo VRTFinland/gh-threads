@@ -39,6 +39,10 @@ func (f *fakeClient) HasReviewCommentUpdates(ctx context.Context, owner, repo st
 	return f.reviewUpdates, nil
 }
 
+func (f *fakeClient) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
+	return nil, nil
+}
+
 func TestFetchDataUsesCacheWhenNoUpdates(t *testing.T) {
 	ctx := context.Background()
 	cacheEntry := &Entry{

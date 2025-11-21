@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/VRTFinland/gh-threads/internal/ghcli"
@@ -26,6 +25,7 @@ type Service struct {
 
 type GitHubClient interface {
 	CallGraphQL(ctx context.Context, query string, variables map[string]string, target any) error
+	FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error)
 	HasIssueCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error)
 	HasReviewCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error)
 	PostREST(ctx context.Context, method, path string, body map[string]string, target any) error
@@ -601,27 +601,6 @@ func cursorValue(value string) string {
 	return value
 }
 
-const blobQuery = `
-query($owner: String!, $repo: String!, $expression: String!) {
-  repository(owner: $owner, name: $repo) {
-    object(expression: $expression) {
-      __typename
-      ... on Blob {
-        text
-      }
-    }
-  }
-}
-`
-
-type blobData struct {
-	Repository struct {
-		Object struct {
-			Text string `json:"text"`
-		} `json:"object"`
-	} `json:"repository"`
-}
-
 type fileKey struct {
 	commit string
 	path   string
@@ -680,23 +659,7 @@ func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit,
 }
 
 func (s *Service) fetchFileLines(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {
-	data := blobData{}
-	expression := fmt.Sprintf("%s:%s", commit, path)
-	variables := map[string]string{
-		"owner":      ghCtx.Owner,
-		"repo":       ghCtx.Repo,
-		"expression": expression,
-	}
-	if err := s.client.CallGraphQL(ctx, blobQuery, variables, &data); err != nil {
-		return nil, err
-	}
-	text := data.Repository.Object.Text
-	if text == "" {
-		return nil, nil
-	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	return strings.Split(text, "\n"), nil
+	return s.client.FileLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
 }
 
 type snippetBlock struct {

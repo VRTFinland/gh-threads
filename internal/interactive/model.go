@@ -17,6 +17,7 @@ const (
 	StateStatus     State = "status"
 	StateFilter     State = "filter"
 	StateFilterMenu State = "filter_menu"
+	StateHelp       State = "help"
 )
 
 type Service interface {
