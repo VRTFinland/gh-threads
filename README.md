@@ -62,6 +62,14 @@ go test ./...
 go build ./cmd/gh-threads
 ```
 
+Handy `make` targets:
+
+```bash
+make test            # run the Go test suite
+make build           # build the CLI for the current platform (to ./dist/gh-threads)
+make release         # build release binaries into ./dist for darwin/linux (arm64+amd64) and windows-amd64
+```
+
 The resulting `gh-threads` binary can be copied anywhere in your `PATH` (GitHub CLI auto-detects it as `gh threads`) or registered locally via:
 
 ```bash
