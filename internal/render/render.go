@@ -22,12 +22,17 @@ type Options struct {
 	Width    int
 }
 
-func DumpJSON(payload threads.Payload) (string, error) {
+var (
+	jsonNumberPattern   = regexp.MustCompile(`-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`)
+	jsonBoolNullPattern = regexp.MustCompile(`\b(?:true|false|null)\b`)
+)
+
+func DumpJSON(payload threads.Payload, colour bool) (string, error) {
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	return string(body), nil
+	return highlightJSON(string(body), colour), nil
 }
 
 func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
@@ -479,6 +484,79 @@ func emphasize(text string, colour bool, highlight bool) string {
 		return fmt.Sprintf("\x1b[1m%s\x1b[0m", text)
 	}
 	return fmt.Sprintf(">> %s", text)
+}
+
+func highlightJSON(body string, colour bool) string {
+	if !colour || body == "" {
+		return body
+	}
+
+	var out strings.Builder
+	last := 0
+	inString := false
+	escaped := false
+	stringStart := 0
+
+	writePlain := func(segment string) {
+		out.WriteString(colourPlainJSON(segment))
+	}
+
+	for idx, r := range body {
+		if !inString {
+			if r == '"' {
+				writePlain(body[last:idx])
+				inString = true
+				stringStart = idx
+				escaped = false
+			}
+			continue
+		}
+
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			segment := body[stringStart : idx+1]
+			out.WriteString(colourJSONString(segment, body[idx+1:]))
+			last = idx + 1
+			inString = false
+		}
+	}
+
+	if last < len(body) {
+		writePlain(body[last:])
+	}
+
+	return out.String()
+}
+
+func colourPlainJSON(segment string) string {
+	segment = jsonNumberPattern.ReplaceAllStringFunc(segment, func(match string) string {
+		return magenta.apply(match, true)
+	})
+	segment = jsonBoolNullPattern.ReplaceAllStringFunc(segment, func(match string) string {
+		return green.apply(match, true)
+	})
+	return segment
+}
+
+func colourJSONString(segment string, remainder string) string {
+	for i := 0; i < len(remainder); i++ {
+		switch remainder[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case ':':
+			return cyan.apply(segment, true)
+		default:
+			return yellow.apply(segment, true)
+		}
+	}
+	return yellow.apply(segment, true)
 }
 
 type colouriser struct {

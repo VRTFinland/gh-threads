@@ -47,6 +47,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	formatFlag := fs.String("format", "summary", "Output format: json or summary (default).")
 	statusFlag := fs.String("status", "all", "Filter review threads by resolution state: all, resolved, or unresolved.")
 	authorFlag := fs.String("author", "", "Filter comments by GitHub login.")
+	textFlag := fs.String("text", "", "Filter threads by matching file path or comment body.")
 	showDiffFlag := fs.Bool("show-diff", false, "Include diff context in summary output.")
 	hideDiffFlag := fs.Bool("hide-diff", false, "Hide diff context in summary output.")
 	noColourFlag := fs.Bool("no-colour", false, "Disable coloured terminal output.")
@@ -116,6 +117,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	noColour := *noColourFlag || *noColorFlag
 	markdownEnabled := !*noMarkdownFlag
 
+	colourEnabled := !noColour && isTerminal(a.outFile)
+
 	ghContext := threads.Context{
 		Owner:       owner,
 		Repo:        repoName,
@@ -166,20 +169,20 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 
 	authorFilter := strings.TrimSpace(*authorFlag)
-	conversationComments = threads.FilterConversationComments(conversationComments, authorFilter)
-	reviewThreads = threads.FilterReviewThreads(reviewThreads, authorFilter, status)
+	textFilter := strings.TrimSpace(*textFlag)
+	conversationComments = threads.FilterConversationComments(conversationComments, authorFilter, textFilter)
+	reviewThreads = threads.FilterReviewThreads(reviewThreads, authorFilter, status, textFilter)
 
 	payload := threads.BuildPayload(ghContext, conversationComments, reviewThreads)
 
 	switch format {
 	case outputJSON:
-		body, err := render.DumpJSON(payload)
+		body, err := render.DumpJSON(payload, colourEnabled)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(a.out, body)
 	case outputSummary:
-		colourEnabled := !noColour && isTerminal(a.outFile)
 		options := render.Options{
 			Colour:   colourEnabled,
 			ShowDiff: showDiff,

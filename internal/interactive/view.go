@@ -3,6 +3,7 @@ package interactive
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,18 +21,19 @@ import (
 
 var (
 	threadHighlightStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Background(lipgloss.Color("29"))
-	commentHighlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("232")).Bold(true).PaddingLeft(2)
+	commentHighlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("232")).Bold(true).PaddingLeft(1)
 	selectedMarkerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	normalStyle           = lipgloss.NewStyle()
 	topBarStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(lipgloss.Color("22")).Bold(true).Padding(0, 1)
 	bottomBarStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("232")).Background(lipgloss.Color("253"))
 	dividerStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	detailStyle           = lipgloss.NewStyle().Padding(1, 2)
+	detailStyle           = lipgloss.NewStyle().Padding(1, 1)
 	authorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Background(lipgloss.NoColor{}).Bold(true)
+	aiAuthorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Background(lipgloss.NoColor{}).Bold(true)
 	timeStyle             = lipgloss.NewStyle()
 	linkStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Underline(true)
-	commentHeaderStyle    = lipgloss.NewStyle().PaddingLeft(2)
-	commentBodyStyle      = lipgloss.NewStyle().PaddingLeft(2)
+	commentHeaderStyle    = lipgloss.NewStyle().PaddingLeft(1)
+	commentBodyStyle      = lipgloss.NewStyle().PaddingLeft(1)
 	replyHeaderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Bold(true)
 	sweepScreenSeq        = "\x1b[0J"
 	lineNumberStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
@@ -39,6 +41,8 @@ var (
 	helpTitleStyle        = lipgloss.NewStyle().Bold(true)
 	helpKeyStyle          = lipgloss.NewStyle().Bold(true)
 	helpBoxStyle          = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder())
+	pathHeaderStyle       = lipgloss.NewStyle().Bold(true)
+	listLineNumberStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	snippetRendererOnce   sync.Once
 	snippetRenderer       *glamour.TermRenderer
 	snippetRendererErr    error
@@ -47,6 +51,14 @@ var (
 	markdownRendererErr   error
 )
 
+var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
+var aiAuthorAliases = map[string][]string{
+	"codex":    {"codex"},
+	"co-pilot": {"copilot", "co-pilot", "co pilot", "github copilot"},
+	"claude":   {"claude"},
+	"gemini":   {"gemini", "google gemini"},
+}
+
 func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, currentState State, input textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if height <= 0 {
 		height = 60
@@ -54,8 +66,8 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	if width <= 0 {
 		width = 80
 	}
-	listHeight = max(3, listHeight)
-	detailHeight = max(3, detailHeight)
+	listHeight = vmax(1, listHeight)
+	detailHeight = vmax(1, detailHeight)
 
 	var b strings.Builder
 	b.WriteString(renderTopBar(state, width))
@@ -73,27 +85,176 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 }
 
 func renderThreadList(state Model, height int, width int) string {
-	var b strings.Builder
 	threads := state.FilteredThreads()
 	if len(threads) == 0 {
 		return normalizeBlock("No threads match current filters.", width, height)
 	}
 	window := vmax(1, height)
 	start := clamp(state.listOffset, 0, max(0, len(threads)-window))
+	pathCounts := summarizePaths(threads)
+	lines, selectionLine := buildThreadListLines(threads, start, window, height, width, state.selectedThread, pathCounts)
+	for (selectionLine == -1 || selectionLine >= height) && start < len(threads)-1 {
+		start++
+		lines, selectionLine = buildThreadListLines(threads, start, window, height, width, state.selectedThread, pathCounts)
+	}
+	content := strings.Join(lines, "\n")
+	return normalizeBlock(content, width, height)
+}
+
+func buildThreadListLines(threads []threads.ReviewThread, start int, window int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) ([]string, int) {
+	lines := make([]string, 0, window+4)
+	selectionLine := -1
 	end := vmin(len(threads), start+window)
+	lastPath := ""
 	for idx := start; idx < end; idx++ {
 		thread := threads[idx]
-		line := fmt.Sprintf("%3d. %-60s:%v [%s] (%d)", idx+1, thread.Path, firstNonNilString(thread.Line, thread.OriginalLine), threadStatus(thread), len(thread.Comments))
-		if idx == state.selectedThread {
-			b.WriteString(threadHighlightStyle.Render(line))
-		} else {
-			b.WriteString(normalStyle.Render(line))
+		if idx == start || thread.Path != lastPath {
+			counts := pathCounts[thread.Path]
+			header := fmt.Sprintf("%s [%d resolved, %d unresolved]", thread.Path, counts.resolved, counts.unresolved)
+			lines = append(lines, pathHeaderStyle.Render(padListLine(header, width)))
+			lastPath = thread.Path
 		}
-		if idx < end-1 {
-			b.WriteString("\n")
+		isLastInPath := idx == len(threads)-1 || threads[idx+1].Path != thread.Path
+		line := renderThreadListEntry(thread, isLastInPath, selectedThread == idx, width)
+		lines = append(lines, line)
+		if selectedThread == idx {
+			selectionLine = len(lines) - 1
+		}
+		if len(lines) >= height {
+			break
 		}
 	}
-	return normalizeBlock(b.String(), width, height)
+	return lines, selectionLine
+}
+
+func renderThreadListEntry(thread threads.ReviewThread, isLastInPath bool, selected bool, width int) string {
+	branch := "├─"
+	if isLastInPath {
+		branch = "╰─"
+	}
+	status := "⬜"
+	if thread.IsResolved {
+		status = "✅"
+	}
+	lineNumbers := listLineNumberStyle.Render(fmt.Sprintf("[L%s]", formatThreadLines(thread)))
+	author := displayAuthor(firstCommentAuthor(thread))
+	prefix := fmt.Sprintf("%s %s %s - %s: ", branch, status, lineNumbers, author)
+	available := width - 1 - lipgloss.Width(prefix)
+	if available < 1 {
+		available = 1
+	}
+	preview := threadPreview(thread, available)
+	parts := prefix + preview
+	rendered := padListLine(parts, width)
+	if selected {
+		return threadHighlightStyle.Render(rendered)
+	}
+	return rendered
+}
+
+func formatThreadLines(thread threads.ReviewThread) string {
+	if thread.StartLine != nil && thread.Line != nil && *thread.StartLine != *thread.Line {
+		return fmt.Sprintf("%d-%d", *thread.StartLine, *thread.Line)
+	}
+	if thread.Line != nil {
+		return fmt.Sprintf("%d", *thread.Line)
+	}
+	if thread.StartLine != nil && thread.OriginalLine != nil && *thread.StartLine != *thread.OriginalLine {
+		return fmt.Sprintf("%d-%d", *thread.StartLine, *thread.OriginalLine)
+	}
+	if thread.OriginalLine != nil {
+		return fmt.Sprintf("%d", *thread.OriginalLine)
+	}
+	return "?"
+}
+
+func firstCommentAuthor(thread threads.ReviewThread) string {
+	if len(thread.Comments) == 0 {
+		return "unknown"
+	}
+	author := strings.TrimSpace(thread.Comments[0].Author)
+	if author == "" {
+		return "unknown"
+	}
+	return author
+}
+
+func threadPreview(thread threads.ReviewThread, maxWidth int) string {
+	if len(thread.Comments) == 0 {
+		return "(no comment)"
+	}
+	body := strings.TrimSpace(thread.Comments[0].Body)
+	sanitized := stripSuggestionBlocks(body)
+	suggestionOnly := isSuggestionBody(body) && strings.TrimSpace(sanitized) == ""
+	rendered := renderCommentMarkdown(sanitized)
+	joined := strings.TrimSpace(strings.Join(rendered, " "))
+	if suggestionOnly {
+		return "suggestion..."
+	}
+	if joined == "" {
+		return "(no comment)"
+	}
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	if lipgloss.Width(joined) > maxWidth {
+		return xansi.Truncate(joined, maxWidth, "...")
+	}
+	return joined
+}
+
+func isSuggestionBody(body string) bool {
+	return strings.Contains(strings.ToLower(body), "```suggestion")
+}
+
+func stripSuggestionBlocks(body string) string {
+	return suggestionBlockRegexp.ReplaceAllString(body, "")
+}
+
+func displayAuthor(name string) string {
+	if ai, ok := aiDisplayName(name); ok {
+		return aiAuthorStyle.Render(ai)
+	}
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		clean = "unknown"
+	}
+	return authorStyle.Render(clean)
+}
+
+func aiDisplayName(name string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for display, aliases := range aiAuthorAliases {
+		for _, alias := range aliases {
+			if strings.Contains(lower, alias) {
+				return fmt.Sprintf("🤖 %s", display), true
+			}
+		}
+	}
+	return "", false
+}
+
+type pathSummary struct {
+	resolved   int
+	unresolved int
+}
+
+func summarizePaths(threads []threads.ReviewThread) map[string]pathSummary {
+	counts := make(map[string]pathSummary)
+	for _, thread := range threads {
+		current := counts[thread.Path]
+		if thread.IsResolved {
+			current.resolved++
+		} else {
+			current.unresolved++
+		}
+		counts[thread.Path] = current
+	}
+	return counts
+}
+
+func padListLine(text string, width int) string {
+	return padOrTrim(" "+text, width)
 }
 
 func renderDetailBlock(state Model, height int, width int, currentState State, input textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
@@ -148,7 +309,7 @@ func renderDetailContent(state Model, maxHeight int) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%v [%s]", thread.Path, firstNonNilString(thread.Line, thread.OriginalLine), threadStatus(*thread))))
+	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%v %s", thread.Path, firstNonNilString(thread.Line, thread.OriginalLine), detailStatus(thread))))
 	b.WriteString("\n")
 	if len(thread.Comments) == 0 {
 		return b.String()
@@ -170,24 +331,27 @@ func renderDetailContent(state Model, maxHeight int) string {
 
 	for i := start; i < end; i++ {
 		comment := thread.Comments[i]
-		header := fmt.Sprintf("%s %s", authorStyle.Render(comment.Author), timeStyle.Render("at "+comment.CreatedAt))
+		header := fmt.Sprintf("%s %s", displayAuthor(comment.Author), timeStyle.Render("at "+comment.CreatedAt))
 		if comment.URL != "" {
 			header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 		}
-		marker := "  "
+		headerMarker := "  "
 		if i == state.selectedComment {
-			marker = selectedMarkerStyle.Render("> ")
+			headerMarker = selectedMarkerStyle.Render(" >")
 		}
+		indentWidth := vmax(2, lipgloss.Width(xansi.Strip(headerMarker)))
+		bodyMarker := strings.Repeat(" ", indentWidth)
 		if i == state.selectedComment {
-			b.WriteString(marker)
+			b.WriteString(headerMarker)
 			b.WriteString(commentHighlightStyle.Render(header))
 		} else {
-			b.WriteString(marker)
+			b.WriteString(headerMarker)
 			b.WriteString(commentHeaderStyle.Render(header))
 		}
 		b.WriteString("\n")
 		body := strings.TrimSpace(comment.Body)
 		for _, line := range renderCommentMarkdown(body) {
+			b.WriteString(bodyMarker)
 			b.WriteString(commentBodyStyle.Render(line))
 			b.WriteString("\n")
 		}
@@ -200,7 +364,7 @@ func renderDetailContent(state Model, maxHeight int) string {
 				marker := "  "
 				lineLabel := lineNumberStyle.Render(fmt.Sprintf("%5d", lineNo))
 				if lineNo == comment.Snippet.HighlightLine {
-					marker = ">>"
+					marker = " >"
 					lineLabel = lineNumberHighlight.Render(fmt.Sprintf("%5d", lineNo))
 				}
 				b.WriteString(fmt.Sprintf("%s %s  %s\n", marker, lineLabel, line))
@@ -429,6 +593,13 @@ func threadStatus(thread threads.ReviewThread) string {
 	return "unresolved"
 }
 
+func detailStatus(thread *threads.ReviewThread) string {
+	if thread != nil && thread.IsResolved {
+		return "✅"
+	}
+	return "⬜ unresolved"
+}
+
 func renderReplyTarget(state Model) string {
 	thread, ok := state.SelectedThread()
 	if !ok || len(thread.Comments) == 0 {
@@ -437,7 +608,7 @@ func renderReplyTarget(state Model) string {
 	idx := clamp(state.selectedComment, 0, len(thread.Comments)-1)
 	comment := thread.Comments[idx]
 
-	header := fmt.Sprintf("Replying to comment #%d by %s", idx+1, comment.Author)
+	header := fmt.Sprintf("Replying to comment #%d by %s", idx+1, strings.TrimSpace(xansi.Strip(displayAuthor(comment.Author))))
 	if comment.URL != "" {
 		header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 	}
@@ -869,7 +1040,7 @@ func parseHunkStart(meta string) (int, bool) {
 	return value, true
 }
 
-func sectionHeights(total int) (int, int) {
+func sectionHeights(total int, listLines int) (int, int) {
 	if total <= 2 {
 		return 1, vmax(1, total-2)
 	}
@@ -886,10 +1057,12 @@ func sectionHeights(total int) (int, int) {
 	if list > content-3 {
 		list = vmax(1, content-3)
 	}
-	detail := content - list
-	if detail < 1 {
-		detail = 1
+	maxList := vmax(1, listLines)
+	list = vmin(list, maxList)
+	if list >= content {
+		list = vmax(1, content-1)
 	}
+	detail := content - list
 	return list, detail
 }
 

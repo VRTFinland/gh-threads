@@ -122,3 +122,29 @@ func TestReplaceSuggestionBlocks_FallsBackWithoutSnippet(t *testing.T) {
 		t.Fatalf("expected suggestion block to remain when snippet missing; got %q", result)
 	}
 }
+
+func TestDumpJSON_ColourisedAndPlain(t *testing.T) {
+	payload := threads.Payload{
+		Repository:  "o/r",
+		PullRequest: 1,
+		ReviewThreads: []threads.ReviewThread{
+			{ThreadID: "t", IsResolved: true},
+		},
+	}
+
+	coloured, err := DumpJSON(payload, true)
+	if err != nil {
+		t.Fatalf("DumpJSON returned error: %v", err)
+	}
+	if !strings.Contains(coloured, "\x1b[") {
+		t.Fatalf("expected coloured JSON output, got %q", coloured)
+	}
+
+	plain, err := DumpJSON(payload, false)
+	if err != nil {
+		t.Fatalf("DumpJSON returned error: %v", err)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("expected plain JSON output without colour codes, got %q", plain)
+	}
+}

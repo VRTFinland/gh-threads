@@ -63,7 +63,7 @@ func newTeaModel(m Model, cfg ProgramConfig) *teaModel {
 	ti.Placeholder = "Type here"
 	ti.CharLimit = 4000
 	defaultHeight := 60
-	listHeight, _ := sectionHeights(defaultHeight)
+	listHeight, _ := sectionHeights(defaultHeight, listLineEstimate(m.FilteredThreads()))
 	m.SetListWindowSize(listHeight)
 	return &teaModel{
 		cfg:                   cfg,
@@ -135,7 +135,7 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewportHeight = msg.Height
 		m.viewportWidth = msg.Width
-		listHeight, _ := sectionHeights(m.viewportHeight)
+		listHeight, _ := sectionHeights(m.viewportHeight, listLineEstimate(m.state.FilteredThreads()))
 		m.state.SetListWindowSize(listHeight)
 		return m, nil
 	}
@@ -463,7 +463,7 @@ func (m *teaModel) View() string {
 	if width <= 0 {
 		width = 80
 	}
-	listHeight, detailHeight := sectionHeights(height)
+	listHeight, detailHeight := sectionHeights(height, listLineEstimate(m.state.FilteredThreads()))
 	m.state.SetListWindowSize(listHeight)
 	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.showHelp, m.state.state, m.input, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
 }
@@ -496,4 +496,17 @@ func refreshCmd(cfg ProgramConfig) tea.Cmd {
 		info, convo, threads, err := cfg.Refresh(true)
 		return refreshFinished{info: info, conversation: convo, threads: threads, err: err}
 	}
+}
+
+func listLineEstimate(threads []threads.ReviewThread) int {
+	if len(threads) == 0 {
+		return 1
+	}
+	lines := len(threads) + 1 // first path header
+	for i := 1; i < len(threads); i++ {
+		if threads[i].Path != threads[i-1].Path {
+			lines++
+		}
+	}
+	return lines
 }

@@ -137,7 +137,7 @@ func TestRenderDetailHighlightsSelectionMarker(t *testing.T) {
 		detailMode:      detailSnippet,
 	}
 	out := stripANSI(renderDetailContent(model, 10))
-	if !strings.Contains(out, ">   bob at") {
+	if !strings.Contains(out, " > bob at") {
 		t.Fatalf("expected selection marker before selected comment, got %q", out)
 	}
 }
@@ -369,6 +369,146 @@ func TestFormatDiffHunkLimitsWhenNoHighlight(t *testing.T) {
 	}
 }
 
+func TestSectionHeightsCapsListAtThirtyPercent(t *testing.T) {
+	totalHeight := 60
+	listHeight, detailHeight := sectionHeights(totalHeight, 50)
+	contentHeight := totalHeight - 3
+	expectedList := vmax(3, contentHeight*3/10)
+	if listHeight != expectedList {
+		t.Fatalf("expected list height %d with many threads, got %d", expectedList, listHeight)
+	}
+	if detailHeight != contentHeight-listHeight {
+		t.Fatalf("expected detail height %d, got %d", contentHeight-listHeight, detailHeight)
+	}
+}
+
+func TestSectionHeightsShrinksWhenFewThreads(t *testing.T) {
+	totalHeight := 60
+	listHeight, detailHeight := sectionHeights(totalHeight, 2)
+	contentHeight := totalHeight - 3
+	if listHeight != 2 {
+		t.Fatalf("expected list height to shrink to 2 threads, got %d", listHeight)
+	}
+	if detailHeight != contentHeight-listHeight {
+		t.Fatalf("expected detail height %d, got %d", contentHeight-listHeight, detailHeight)
+	}
+}
+
+func TestRenderThreadListGroupsByPath(t *testing.T) {
+	threads := []threads.ReviewThread{
+		{
+			ThreadID:   "t1",
+			Path:       "path/a.go",
+			Line:       intPtr(3),
+			IsResolved: false,
+			Comments:   []threads.ThreadComment{{ID: "c1", Author: "alice", Body: "first"}},
+		},
+		{
+			ThreadID:   "t2",
+			Path:       "path/a.go",
+			Line:       intPtr(5),
+			IsResolved: true,
+			Comments:   []threads.ThreadComment{{ID: "c2", Author: "bob", Body: "second"}},
+		},
+		{
+			ThreadID:   "t3",
+			Path:       "path/b.go",
+			Line:       intPtr(9),
+			IsResolved: false,
+			Comments:   []threads.ThreadComment{{ID: "c3", Author: "carol", Body: "third"}},
+		},
+	}
+	model := Model{
+		threads:         threads,
+		filteredIndexes: []int{0, 1, 2},
+		selectedThread:  1,
+	}
+	out := stripANSI(renderThreadList(model, 10, 120))
+	if strings.Count(out, " path/a.go [1 resolved, 1 unresolved]") != 1 {
+		t.Fatalf("expected single header for path/a.go, got %q", out)
+	}
+	if !strings.Contains(out, " ├─ ⬜ [L3] - alice: first") {
+		t.Fatalf("expected unresolved entry with line numbers, got %q", out)
+	}
+	if !strings.Contains(out, " ╰─ ✅ [L5] - bob: second") {
+		t.Fatalf("expected resolved entry with closing branch, got %q", out)
+	}
+	if !strings.Contains(out, " path/b.go [0 resolved, 1 unresolved]") {
+		t.Fatalf("expected second path header, got %q", out)
+	}
+}
+
+func TestRenderThreadListShowsSuggestionPreview(t *testing.T) {
+	body := "Please change\n```suggestion\nnew content\n```"
+	threads := []threads.ReviewThread{
+		{
+			ThreadID:   "t-suggestion",
+			Path:       "path/a.go",
+			Line:       intPtr(10),
+			IsResolved: false,
+			Comments:   []threads.ThreadComment{{ID: "c1", Author: "alice", Body: body}},
+		},
+	}
+	model := Model{
+		threads:         threads,
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+	}
+	out := stripANSI(renderThreadList(model, 5, 120))
+	if strings.Contains(out, "suggestion") {
+		t.Fatalf("expected non-suggestion text to be shown when present, got %q", out)
+	}
+	if !strings.Contains(out, "Please change") {
+		t.Fatalf("expected original text to be kept when suggestion is not the only content, got %q", out)
+	}
+}
+
+func TestDisplayAuthorReplacesAINameInDetail(t *testing.T) {
+	thread := threads.ReviewThread{
+		ThreadID: "ai-detail",
+		Path:     "foo.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "GitHub Copilot", Body: "hi"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		detailExpanded:  true,
+		detailMode:      detailSnippet,
+	}
+	out := stripANSI(renderDetailContent(model, 5))
+	if !strings.Contains(out, "🤖 co-pilot at") {
+		t.Fatalf("expected AI author label, got %q", out)
+	}
+	if strings.Contains(out, "GitHub Copilot") {
+		t.Fatalf("expected original AI name to be replaced, got %q", out)
+	}
+}
+
+func TestDisplayAuthorReplacesAINameInList(t *testing.T) {
+	thread := threads.ReviewThread{
+		ThreadID:   "ai-list",
+		Path:       "foo.go",
+		Line:       intPtr(12),
+		IsResolved: false,
+		Comments:   []threads.ThreadComment{{ID: "c1", Author: "Codex", Body: "hi"}},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+	}
+	out := stripANSI(renderThreadList(model, 5, 80))
+	if !strings.Contains(out, "🤖 codex") {
+		t.Fatalf("expected AI label in list, got %q", out)
+	}
+	if strings.Contains(out, "Codex") {
+		t.Fatalf("expected original AI name to be replaced in list, got %q", out)
+	}
+}
+
 func TestSnippetLanguageMapping(t *testing.T) {
 	cases := []struct {
 		path string
@@ -440,4 +580,8 @@ var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 func stripANSI(s string) string {
 	return ansiRegexp.ReplaceAllString(s, "")
+}
+
+func intPtr(v int) *int {
+	return &v
 }

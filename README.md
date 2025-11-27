@@ -30,7 +30,9 @@ Key flags:
 - `--status all|resolved|unresolved`
 - `--show-diff/--hide-diff`
 - `--author <github_login>`
-- `--no-colour` / `--no-markdown`
+- `--text <substring>` to filter threads by file path or comment body
+- `--no-colour` / `--no-color` to disable coloured output (summary and JSON)
+- `--no-markdown`
 - `--refresh-cache` to bypass persisted data under `$XDG_CACHE_HOME/threads`
 
 ### Interactive mode
