@@ -268,26 +268,35 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	if showHelp {
 		return centerBlock(renderHelp(width), width, height)
 	}
-	sections := make([]string, 0, 4)
-	sections = append(sections, renderDetailContent(state, height, currentState, replyInput, width))
+	detail, anchor := buildDetailContent(state, height, currentState, replyInput, width)
 
+	extras := make([]string, 0, 3)
 	if currentState == StateFilter {
-		sections = append(sections, filterInput.View())
+		extras = append(extras, filterInput.View())
 	}
 	if currentState == StateFilter && inputPurpose == "author" {
 		if suggestions := state.AuthorSuggestions(filterInput.Value(), authorSuggestionLimit); len(suggestions) > 0 {
-			sections = append(sections, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
+			extras = append(extras, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
 		}
 	}
 	if currentState == StateFilter && inputPurpose == "status" {
 		if suggestions := statusSuggestions(filterInput.Value()); len(suggestions) > 0 {
-			sections = append(sections, renderStatusSuggestions(suggestions, statusSuggestionIndex))
+			extras = append(extras, renderStatusSuggestions(suggestions, statusSuggestionIndex))
 		}
 	}
 	if showStatus {
-		sections = append(sections, renderStatusPicker(statusIndex))
+		extras = append(extras, renderStatusPicker(statusIndex))
 	}
+	extras = filterEmptySections(extras)
 
+	// Each extra section costs its own lines plus the blank separator line.
+	extraHeight := 0
+	for _, extra := range extras {
+		extraHeight += len(strings.Split(strings.TrimRight(extra, "\n"), "\n")) + 1
+	}
+	detail = windowDetailBlock(detail, height-extraHeight, anchor, currentState == StateReply)
+
+	sections := append([]string{detail}, extras...)
 	content := strings.Join(filterEmptySections(sections), "\n\n")
 	return normalizeBlock(content, width, height)
 }
@@ -320,15 +329,30 @@ func renderReplyPane(content string, width int) string {
 }
 
 func renderDetailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
+	content, _ := buildDetailContent(state, maxHeight, currentState, replyInput, width)
+	return content
+}
+
+// detailAnchor marks the line range of the detail block that must stay on
+// screen: the selected comment, extended to cover the reply editor while
+// replying.
+type detailAnchor struct {
+	start int
+	end   int
+}
+
+func buildDetailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) (string, detailAnchor) {
+	anchor := detailAnchor{start: -1, end: -1}
 	thread, ok := state.SelectedThread()
 	if !ok {
-		return ""
+		return "", anchor
 	}
 	var b strings.Builder
+	lineCount := func() int { return strings.Count(b.String(), "\n") }
 	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%v %s", thread.Path, firstNonNilString(thread.Line, thread.OriginalLine), detailStatus(thread))))
 	b.WriteString("\n")
 	if len(thread.Comments) == 0 {
-		return b.String()
+		return b.String(), anchor
 	}
 
 	maxComments := vmax(1, maxHeight/6)
@@ -358,6 +382,7 @@ func renderDetailContent(state Model, maxHeight int, currentState State, replyIn
 		indentWidth := vmax(2, lipgloss.Width(xansi.Strip(headerMarker)))
 		bodyMarker := strings.Repeat(" ", indentWidth)
 		if i == state.selectedComment {
+			anchor.start = lineCount()
 			b.WriteString(headerMarker)
 			b.WriteString(commentHighlightStyle.Render(header))
 		} else {
@@ -372,6 +397,9 @@ func renderDetailContent(state Model, maxHeight int, currentState State, replyIn
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+		if i == state.selectedComment {
+			anchor.end = lineCount()
+		}
 		if currentState == StateReply && i == state.selectedComment {
 			header := strings.TrimSpace(renderReplyTarget(state))
 			if header != "" {
@@ -380,6 +408,7 @@ func renderDetailContent(state Model, maxHeight int, currentState State, replyIn
 			}
 			b.WriteString(renderReplyPane(replyInput.View(), width))
 			b.WriteString("\n\n")
+			anchor.end = lineCount()
 		}
 		insertBlankAfterSnippet := false
 		if comment.Snippet != nil && i == 0 {
@@ -411,7 +440,27 @@ func renderDetailContent(state Model, maxHeight int, currentState State, replyIn
 			b.WriteString("\n")
 		}
 	}
-	return b.String()
+	return b.String(), anchor
+}
+
+// windowDetailBlock scrolls content so the anchored range stays visible within
+// height lines. When the range is taller than the window, preferEnd keeps its
+// end on screen (the reply editor, where the cursor sits) instead of its start.
+func windowDetailBlock(content string, height int, anchor detailAnchor, preferEnd bool) string {
+	if height <= 0 || anchor.start < 0 {
+		return content
+	}
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if len(lines) <= height {
+		return content
+	}
+	end := vmin(anchor.end, len(lines))
+	start := end - height
+	if start > anchor.start && !preferEnd {
+		start = anchor.start
+	}
+	start = clamp(start, 0, len(lines)-height)
+	return strings.Join(lines[start:start+height], "\n")
 }
 
 func renderTopBar(state Model, width int) string {

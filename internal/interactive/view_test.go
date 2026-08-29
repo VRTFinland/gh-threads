@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -582,4 +583,68 @@ func stripANSI(s string) string {
 
 func intPtr(v int) *int {
 	return &v
+}
+
+func TestRenderDetailBlockKeepsReplyEditorVisible(t *testing.T) {
+	longBody := strings.Repeat("padding line\n", 24)
+	thread := threads.ReviewThread{
+		ThreadID: "t1",
+		Path:     "file.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "alice", Body: longBody},
+			{ID: "c2", Author: "bob", Body: "second body", URL: "https://example.com"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		selectedComment: 1,
+		detailExpanded:  true,
+		detailMode:      detailSnippet,
+	}
+	reply := textarea.New()
+	reply.SetWidth(60)
+	reply.SetValue("my draft reply")
+
+	out := stripANSI(renderDetailBlock(model, 20, 80, StateReply, reply, textinput.New(), "reply", false, 0, false, -1, -1))
+
+	if !strings.Contains(out, "Replying to") {
+		t.Fatalf("expected reply target header to stay on screen, got:\n%s", out)
+	}
+	if !strings.Contains(out, "my draft reply") {
+		t.Fatalf("expected reply editor content to stay on screen, got:\n%s", out)
+	}
+	if got := len(strings.Split(out, "\n")); got != 20 {
+		t.Fatalf("expected detail block to fill exactly 20 lines, got %d", got)
+	}
+}
+
+func TestRenderDetailBlockKeepsSelectionVisibleWhenScrolled(t *testing.T) {
+	longBody := strings.Repeat("padding line\n", 24)
+	thread := threads.ReviewThread{
+		ThreadID: "t1",
+		Path:     "file.go",
+		Comments: []threads.ThreadComment{
+			{ID: "c1", Author: "alice", Body: longBody},
+			{ID: "c2", Author: "bob", Body: "second body"},
+		},
+	}
+	model := Model{
+		threads:         []threads.ReviewThread{thread},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		selectedComment: 1,
+		detailExpanded:  true,
+		detailMode:      detailSnippet,
+	}
+
+	out := stripANSI(renderDetailBlock(model, 20, 80, StateView, textarea.New(), textinput.New(), "", false, 0, false, -1, -1))
+
+	if !strings.Contains(out, "> bob at") {
+		t.Fatalf("expected selected comment header to stay on screen, got:\n%s", out)
+	}
+	if !strings.Contains(out, "second body") {
+		t.Fatalf("expected selected comment body to stay on screen, got:\n%s", out)
+	}
 }

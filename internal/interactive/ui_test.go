@@ -122,3 +122,21 @@ func TestCommentNavigationWithLeftRightKeys(t *testing.T) {
 		t.Fatalf("expected left arrow to clamp at first comment, got %d", tm.state.selectedComment)
 	}
 }
+
+func TestUpdateReplyKeepsCursorPositionWithinText(t *testing.T) {
+	model := NewModel(nil, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.state = StateReply
+	tm.inputPurpose = "reply"
+	tm.replyInput.Focus()
+
+	for _, r := range "ab" {
+		tm.updateReply(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	tm.updateReply(tea.KeyMsg{Type: tea.KeyLeft})
+	tm.updateReply(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+
+	if got := tm.replyInput.Value(); got != "aXb" {
+		t.Fatalf("expected cursor to stay where the user moved it, got %q", got)
+	}
+}

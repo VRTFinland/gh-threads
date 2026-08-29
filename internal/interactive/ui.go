@@ -280,7 +280,6 @@ func (m *teaModel) updateReply(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.replyInput, cmd = m.replyInput.Update(msg)
 	m.adjustReplyHeight()
-	m.replyInput.CursorEnd()
 	return m, cmd
 }
 
