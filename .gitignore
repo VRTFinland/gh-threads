@@ -2,3 +2,4 @@
 /gh-threads.exe
 /dist
 .gocache
+.cache/

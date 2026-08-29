@@ -20,7 +20,7 @@ func TestUpdateFilterUsesSelectedAuthorSuggestion(t *testing.T) {
 	tm.state = model
 	tm.state.state = StateFilter
 	tm.inputPurpose = "author"
-	tm.input.SetValue("a")
+	tm.filterInput.SetValue("a")
 	tm.authorSuggestionIndex = 1
 
 	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
@@ -28,8 +28,8 @@ func TestUpdateFilterUsesSelectedAuthorSuggestion(t *testing.T) {
 	if tm.state.filters.Author != "Alice" {
 		t.Fatalf("expected author filter to pick highlighted suggestion, got %q", tm.state.filters.Author)
 	}
-	if tm.input.Value() != "Alice" {
-		t.Fatalf("expected input value to reflect selected suggestion, got %q", tm.input.Value())
+	if tm.filterInput.Value() != "Alice" {
+		t.Fatalf("expected input value to reflect selected suggestion, got %q", tm.filterInput.Value())
 	}
 	if tm.state.state != StateView {
 		t.Fatalf("expected state to return to view after applying filter, got %s", tm.state.state)
@@ -46,7 +46,7 @@ func TestUpdateFilterAppliesSingleAuthorSuggestionWithoutSelection(t *testing.T)
 	tm.state = model
 	tm.state.state = StateFilter
 	tm.inputPurpose = "author"
-	tm.input.SetValue("ali")
+	tm.filterInput.SetValue("ali")
 
 	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -61,7 +61,7 @@ func TestUpdateFilterAcceptsStatusShortcuts(t *testing.T) {
 	tm.state = model
 	tm.state.state = StateFilter
 	tm.inputPurpose = "status"
-	tm.input.SetValue("u")
+	tm.filterInput.SetValue("u")
 
 	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
 

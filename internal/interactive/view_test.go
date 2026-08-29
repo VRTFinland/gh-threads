@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -28,7 +29,7 @@ func TestRenderDetailCollapsedKeepsFirstCommentVisible(t *testing.T) {
 		selectedThread:  0,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 5)
+	out := renderDetailContent(model, 5, StateView, textarea.New(), 80)
 	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
 		t.Fatalf("expected first and second comments to be shown: %s", out)
 	}
@@ -52,7 +53,7 @@ func TestRenderDetailCollapsedShowsSelectedComment(t *testing.T) {
 		detailExpanded:  false,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 5))
+	out := stripANSI(renderDetailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "third") || !strings.Contains(out, "first") {
 		t.Fatalf("expected first and selected comment to be shown, got %s", out)
 	}
@@ -87,7 +88,7 @@ func TestRenderDetailExpandedRespectsHeightWindow(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 6)
+	out := renderDetailContent(model, 6, StateView, textarea.New(), 80)
 	shown := strings.Count(out, "body-")
 	if shown > 2 {
 		t.Fatalf("expected at most 2 comments in viewport, got %d", shown)
@@ -113,7 +114,7 @@ func TestRenderDetailKeepsSelectionInBounds(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 8)
+	out := renderDetailContent(model, 8, StateView, textarea.New(), 80)
 	if !strings.Contains(out, "third") {
 		t.Fatalf("expected selected final comment to be rendered, got %s", out)
 	}
@@ -136,7 +137,7 @@ func TestRenderDetailHighlightsSelectionMarker(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 10))
+	out := stripANSI(renderDetailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, " > bob at") {
 		t.Fatalf("expected selection marker before selected comment, got %q", out)
 	}
@@ -170,7 +171,7 @@ func TestRenderDetailShowsSnippetOnlyForFirstComment(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 20))
+	out := stripANSI(renderDetailContent(model, 20, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "first snippet line") {
 		t.Fatalf("expected first snippet to be rendered: %s", out)
 	}
@@ -200,7 +201,7 @@ func TestRenderDetailShowsSnippetEvenInDiffMode(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailDiff,
 	}
-	out := stripANSI(renderDetailContent(model, 10))
+	out := stripANSI(renderDetailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "snippet body") {
 		t.Fatalf("expected snippet to remain visible in diff mode, got %s", out)
 	}
@@ -224,9 +225,6 @@ func TestRenderReplyTargetShowsSelectedComment(t *testing.T) {
 	out := renderReplyTarget(model)
 	if !strings.Contains(out, "bob") {
 		t.Fatalf("expected author in reply target, got: %s", out)
-	}
-	if !strings.Contains(out, "second body") {
-		t.Fatalf("expected preview of body, got: %s", out)
 	}
 	if !strings.Contains(out, "(https://example.com)") {
 		t.Fatalf("expected link rendering, got: %s", out)
@@ -478,7 +476,7 @@ func TestDisplayAuthorReplacesAINameInDetail(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 5))
+	out := stripANSI(renderDetailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "🤖 co-pilot at") {
 		t.Fatalf("expected AI author label, got %q", out)
 	}

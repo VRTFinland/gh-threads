@@ -6,8 +6,10 @@ import (
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const authorSuggestionLimit = 6
@@ -44,7 +46,8 @@ type teaModel struct {
 	cfg   ProgramConfig
 	state Model
 
-	input                 textinput.Model
+	replyInput            textarea.Model
+	filterInput           textinput.Model
 	inputPurpose          string // "reply", "filter", "author"
 	statusIndex           int
 	showStatus            bool
@@ -59,16 +62,41 @@ type teaModel struct {
 }
 
 func newTeaModel(m Model, cfg ProgramConfig) *teaModel {
-	ti := textinput.New()
-	ti.Placeholder = "Type here"
-	ti.CharLimit = 4000
+	filter := textinput.New()
+	filter.Placeholder = "Type here"
+	filter.CharLimit = 4000
+
+	reply := textarea.New()
+	reply.Placeholder = "Reply (enter for newline, ctrl+d to send)"
+	reply.CharLimit = 4000
+	reply.SetHeight(1)
+	reply.MaxHeight = 12
+	reply.SetWidth(80)
+	reply.Prompt = ""
+	reply.ShowLineNumbers = false
+	reply.EndOfBufferCharacter = ' '
+	baseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("231"))
+	replyStyle := textarea.Style{
+		Base:             baseStyle,
+		CursorLine:       baseStyle,
+		EndOfBuffer:      baseStyle,
+		LineNumber:       baseStyle,
+		CursorLineNumber: baseStyle,
+		Placeholder:      baseStyle.Foreground(lipgloss.Color("239")),
+		Text:             baseStyle,
+		Prompt:           baseStyle,
+	}
+	reply.FocusedStyle = replyStyle
+	reply.BlurredStyle = replyStyle
+
 	defaultHeight := 60
 	listHeight, _ := sectionHeights(defaultHeight, listLineEstimate(m.FilteredThreads()))
 	m.SetListWindowSize(listHeight)
 	return &teaModel{
 		cfg:                   cfg,
 		state:                 m,
-		input:                 ti,
+		replyInput:            reply,
+		filterInput:           filter,
 		authorSuggestionIndex: -1,
 		statusSuggestionIndex: -1,
 		viewportHeight:        defaultHeight,
@@ -135,6 +163,9 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewportHeight = msg.Height
 		m.viewportWidth = msg.Width
+		if msg.Width > 4 {
+			m.replyInput.SetWidth(msg.Width - 4)
+		}
 		listHeight, _ := sectionHeights(m.viewportHeight, listLineEstimate(m.state.FilteredThreads()))
 		m.state.SetListWindowSize(listHeight)
 		return m, nil
@@ -177,9 +208,10 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.infoMessage = ""
 			m.state.state = StateReply
 			m.inputPurpose = "reply"
-			m.input.Placeholder = "Reply text"
-			m.input.SetValue("")
-			m.input.Focus()
+			m.replyInput.SetValue("")
+			m.replyInput.CursorEnd()
+			m.replyInput.Focus()
+			m.adjustReplyHeight()
 		}
 	case "S":
 		if thread, ok := m.state.SelectedThread(); ok {
@@ -195,31 +227,31 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state.errMessage = ""
 		m.state.state = StateFilter
 		m.inputPurpose = "status"
-		m.input.Placeholder = "Filter by status (all/resolved/unresolved)"
-		m.input.SetValue("")
+		m.filterInput.Placeholder = "Filter by status (all/resolved/unresolved)"
+		m.filterInput.SetValue("")
 		m.authorSuggestionIndex = -1
 		m.statusSuggestionIndex = -1
-		m.input.Focus()
+		m.filterInput.Focus()
 		return m, textinput.Blink
 	case "/":
 		m.state.errMessage = ""
 		m.state.state = StateFilter
 		m.inputPurpose = "text"
-		m.input.Placeholder = "Filter by text"
-		m.input.SetValue(m.state.filters.Text)
+		m.filterInput.Placeholder = "Filter by text"
+		m.filterInput.SetValue(m.state.filters.Text)
 		m.authorSuggestionIndex = -1
 		m.statusSuggestionIndex = -1
-		m.input.Focus()
+		m.filterInput.Focus()
 		return m, textinput.Blink
 	case "a":
 		m.state.errMessage = ""
 		m.state.state = StateFilter
 		m.inputPurpose = "author"
-		m.input.Placeholder = "Filter by author"
-		m.input.SetValue("")
+		m.filterInput.Placeholder = "Filter by author"
+		m.filterInput.SetValue("")
 		m.authorSuggestionIndex = -1
 		m.statusSuggestionIndex = -1
-		m.input.Focus()
+		m.filterInput.Focus()
 		return m, textinput.Blink
 	case "f":
 		m.state.CycleStatusFilter()
@@ -234,14 +266,14 @@ func (m *teaModel) updateReply(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.state.state = StateView
+		m.replyInput.Blur()
 		return m, nil
 	case "ctrl+d":
-		fallthrough
-	case "enter":
-		text := m.input.Value()
+		text := m.replyInput.Value()
 		thread, ok := m.state.SelectedThread()
 		if !ok || strings.TrimSpace(text) == "" {
 			m.state.state = StateView
+			m.replyInput.Blur()
 			return m, nil
 		}
 		m.loading = true
@@ -250,7 +282,9 @@ func (m *teaModel) updateReply(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
+	m.replyInput, cmd = m.replyInput.Update(msg)
+	m.adjustReplyHeight()
+	m.replyInput.CursorEnd()
 	return m, cmd
 }
 
@@ -274,17 +308,17 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "enter":
-		value := m.input.Value()
+		value := m.filterInput.Value()
 		switch m.inputPurpose {
 		case "author":
 			suggestions := m.state.AuthorSuggestions(value, authorSuggestionLimit)
 			switch {
 			case m.authorSuggestionIndex >= 0 && m.authorSuggestionIndex < len(suggestions):
 				value = suggestions[m.authorSuggestionIndex]
-				m.input.SetValue(value)
+				m.filterInput.SetValue(value)
 			case len(suggestions) == 1:
 				value = suggestions[0]
-				m.input.SetValue(value)
+				m.filterInput.SetValue(value)
 			}
 			m.state.SetFilterAuthor(value)
 			m.authorSuggestionIndex = -1
@@ -302,19 +336,19 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
-	prev := m.input.Value()
-	m.input, cmd = m.input.Update(msg)
-	if m.inputPurpose == "author" && m.input.Value() != prev {
+	prev := m.filterInput.Value()
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	if m.inputPurpose == "author" && m.filterInput.Value() != prev {
 		m.authorSuggestionIndex = -1
 	}
-	if m.inputPurpose == "status" && m.input.Value() != prev {
+	if m.inputPurpose == "status" && m.filterInput.Value() != prev {
 		m.statusSuggestionIndex = -1
 	}
 	return m, cmd
 }
 
 func (m *teaModel) cycleAuthorSuggestion(delta int) bool {
-	suggestions := m.state.AuthorSuggestions(m.input.Value(), authorSuggestionLimit)
+	suggestions := m.state.AuthorSuggestions(m.filterInput.Value(), authorSuggestionLimit)
 	if len(suggestions) == 0 {
 		m.authorSuggestionIndex = -1
 		return false
@@ -332,7 +366,7 @@ func (m *teaModel) cycleAuthorSuggestion(delta int) bool {
 }
 
 func (m *teaModel) cycleStatusSuggestion(delta int) bool {
-	suggestions := statusSuggestions(m.input.Value())
+	suggestions := statusSuggestions(m.filterInput.Value())
 	if len(suggestions) == 0 {
 		m.statusSuggestionIndex = -1
 		return false
@@ -465,7 +499,27 @@ func (m *teaModel) View() string {
 	}
 	listHeight, detailHeight := sectionHeights(height, listLineEstimate(m.state.FilteredThreads()))
 	m.state.SetListWindowSize(listHeight)
-	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.showHelp, m.state.state, m.input, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
+	if width > 2 {
+		m.replyInput.SetWidth(width - 2)
+		m.adjustReplyHeight()
+	}
+	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.showHelp, m.state.state, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
+}
+
+func (m *teaModel) adjustReplyHeight() {
+	content := m.replyInput.Value()
+	lines := strings.Count(content, "\n") + 1
+	minLines := 1
+	if content != "" && lines < 2 {
+		lines = 2
+	}
+	if lines < minLines {
+		lines = minLines
+	}
+	if lines > m.replyInput.MaxHeight {
+		lines = m.replyInput.MaxHeight
+	}
+	m.replyInput.SetHeight(lines)
 }
 
 type replyFinished struct{ err error }

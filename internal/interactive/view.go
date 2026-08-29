@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -35,20 +36,26 @@ var (
 	commentHeaderStyle    = lipgloss.NewStyle().PaddingLeft(1)
 	commentBodyStyle      = lipgloss.NewStyle().PaddingLeft(1)
 	replyHeaderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Bold(true)
-	sweepScreenSeq        = "\x1b[0J"
-	lineNumberStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	lineNumberHighlight   = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
-	helpTitleStyle        = lipgloss.NewStyle().Bold(true)
-	helpKeyStyle          = lipgloss.NewStyle().Bold(true)
-	helpBoxStyle          = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder())
-	pathHeaderStyle       = lipgloss.NewStyle().Bold(true)
-	listLineNumberStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	snippetRendererOnce   sync.Once
-	snippetRenderer       *glamour.TermRenderer
-	snippetRendererErr    error
-	markdownRendererOnce  sync.Once
-	markdownRenderer      *glamour.TermRenderer
-	markdownRendererErr   error
+	replyPaneStyle        = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("231")).
+				Background(lipgloss.Color("245")).
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("245")).
+				PaddingLeft(1).PaddingRight(1)
+	sweepScreenSeq       = "\x1b[0J"
+	lineNumberStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lineNumberHighlight  = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+	helpTitleStyle       = lipgloss.NewStyle().Bold(true)
+	helpKeyStyle         = lipgloss.NewStyle().Bold(true)
+	helpBoxStyle         = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder())
+	pathHeaderStyle      = lipgloss.NewStyle().Bold(true)
+	listLineNumberStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	snippetRendererOnce  sync.Once
+	snippetRenderer      *glamour.TermRenderer
+	snippetRendererErr   error
+	markdownRendererOnce sync.Once
+	markdownRenderer     *glamour.TermRenderer
+	markdownRendererErr  error
 )
 
 var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
@@ -59,7 +66,7 @@ var aiAuthorAliases = map[string][]string{
 	"gemini":   {"gemini", "google gemini"},
 }
 
-func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, currentState State, input textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if height <= 0 {
 		height = 60
 	}
@@ -76,7 +83,7 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	b.WriteString("\n")
 	b.WriteString(renderDivider(width))
 	b.WriteString("\n")
-	detail := renderDetailBlock(state, detailHeight, width, currentState, input, inputPurpose, showStatus, statusIndex, showFilter, filterIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
+	detail := renderDetailBlock(state, detailHeight, width, currentState, replyInput, filterInput, inputPurpose, showStatus, statusIndex, showFilter, filterIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
 	b.WriteString(detail)
 	b.WriteString("\n")
 	b.WriteString(renderBottomBar(state, width))
@@ -257,28 +264,23 @@ func padListLine(text string, width int) string {
 	return padOrTrim(" "+text, width)
 }
 
-func renderDetailBlock(state Model, height int, width int, currentState State, input textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func renderDetailBlock(state Model, height int, width int, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if showHelp {
 		return centerBlock(renderHelp(width), width, height)
 	}
 	sections := make([]string, 0, 4)
-	sections = append(sections, renderDetailContent(state, height))
+	sections = append(sections, renderDetailContent(state, height, currentState, replyInput, width))
 
-	if currentState == StateReply {
-		if replyTarget := strings.TrimSpace(renderReplyTarget(state)); replyTarget != "" {
-			sections = append(sections, replyTarget)
-		}
-	}
-	if currentState == StateReply || currentState == StateFilter {
-		sections = append(sections, input.View())
+	if currentState == StateFilter {
+		sections = append(sections, filterInput.View())
 	}
 	if currentState == StateFilter && inputPurpose == "author" {
-		if suggestions := state.AuthorSuggestions(input.Value(), authorSuggestionLimit); len(suggestions) > 0 {
+		if suggestions := state.AuthorSuggestions(filterInput.Value(), authorSuggestionLimit); len(suggestions) > 0 {
 			sections = append(sections, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
 		}
 	}
 	if currentState == StateFilter && inputPurpose == "status" {
-		if suggestions := statusSuggestions(input.Value()); len(suggestions) > 0 {
+		if suggestions := statusSuggestions(filterInput.Value()); len(suggestions) > 0 {
 			sections = append(sections, renderStatusSuggestions(suggestions, statusSuggestionIndex))
 		}
 	}
@@ -303,7 +305,24 @@ func filterEmptySections(parts []string) []string {
 	return result
 }
 
-func renderDetailContent(state Model, maxHeight int) string {
+func renderReplyPane(content string, width int) string {
+	if width <= 0 {
+		return content
+	}
+	style := replyPaneStyle.Copy().Width(width)
+	frame := style.GetHorizontalFrameSize()
+	innerWidth := width - frame
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = padOrTrim(line, innerWidth)
+	}
+	return style.Render(strings.Join(lines, "\n"))
+}
+
+func renderDetailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
 	thread, ok := state.SelectedThread()
 	if !ok {
 		return ""
@@ -356,6 +375,15 @@ func renderDetailContent(state Model, maxHeight int) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+		if currentState == StateReply && i == state.selectedComment {
+			header := strings.TrimSpace(renderReplyTarget(state))
+			if header != "" {
+				b.WriteString(header)
+				b.WriteString("\n")
+			}
+			b.WriteString(renderReplyPane(replyInput.View(), width))
+			b.WriteString("\n\n")
+		}
 		insertBlankAfterSnippet := false
 		if comment.Snippet != nil && i == 0 {
 			snippetLines := snippetDisplayLines(comment.Snippet)
@@ -612,16 +640,7 @@ func renderReplyTarget(state Model) string {
 	if comment.URL != "" {
 		header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 	}
-
-	body := replyPreview(comment.Body)
-
-	var b strings.Builder
-	b.WriteString(replyHeaderStyle.Render(header))
-	if body != "" {
-		b.WriteString("\n")
-		b.WriteString(commentBodyStyle.Render(body))
-	}
-	return b.String()
+	return replyHeaderStyle.Render(header)
 }
 
 func replyPreview(body string) string {
