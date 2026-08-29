@@ -12,12 +12,11 @@ import (
 type State string
 
 const (
-	StateView       State = "view"
-	StateReply      State = "reply"
-	StateStatus     State = "status"
-	StateFilter     State = "filter"
-	StateFilterMenu State = "filter_menu"
-	StateHelp       State = "help"
+	StateView   State = "view"
+	StateReply  State = "reply"
+	StateStatus State = "status"
+	StateFilter State = "filter"
+	StateHelp   State = "help"
 )
 
 type Service interface {

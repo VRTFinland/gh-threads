@@ -66,7 +66,7 @@ var aiAuthorAliases = map[string][]string{
 	"gemini":   {"gemini", "google gemini"},
 }
 
-func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showHelp bool, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if height <= 0 {
 		height = 60
 	}
@@ -83,7 +83,7 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	b.WriteString("\n")
 	b.WriteString(renderDivider(width))
 	b.WriteString("\n")
-	detail := renderDetailBlock(state, detailHeight, width, currentState, replyInput, filterInput, inputPurpose, showStatus, statusIndex, showFilter, filterIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
+	detail := renderDetailBlock(state, detailHeight, width, currentState, replyInput, filterInput, inputPurpose, showStatus, statusIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
 	b.WriteString(detail)
 	b.WriteString("\n")
 	b.WriteString(renderBottomBar(state, width))
@@ -264,7 +264,7 @@ func padListLine(text string, width int) string {
 	return padOrTrim(" "+text, width)
 }
 
-func renderDetailBlock(state Model, height int, width int, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showFilter bool, filterIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func renderDetailBlock(state Model, height int, width int, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if showHelp {
 		return centerBlock(renderHelp(width), width, height)
 	}
@@ -286,9 +286,6 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	}
 	if showStatus {
 		sections = append(sections, renderStatusPicker(statusIndex))
-	}
-	if showFilter {
-		sections = append(sections, renderFilterPicker(filterIndex))
 	}
 
 	content := strings.Join(filterEmptySections(sections), "\n\n")
@@ -470,20 +467,6 @@ func renderStatusPicker(index int) string {
 	return b.String()
 }
 
-func renderFilterPicker(index int) string {
-	options := []string{"all", "resolved", "unresolved"}
-	var b strings.Builder
-	b.WriteString("Filter threads by status:\n")
-	for i, option := range options {
-		prefix := "  "
-		if i == index {
-			prefix = "> "
-		}
-		b.WriteString(prefix + option + "\n")
-	}
-	return b.String()
-}
-
 func renderAuthorSuggestions(matches []string, selected int) string {
 	if len(matches) == 0 {
 		return ""
@@ -614,13 +597,6 @@ func firstNonNilString(values ...*int) string {
 	return "?"
 }
 
-func threadStatus(thread threads.ReviewThread) string {
-	if thread.IsResolved {
-		return "resolved"
-	}
-	return "unresolved"
-}
-
 func detailStatus(thread *threads.ReviewThread) string {
 	if thread != nil && thread.IsResolved {
 		return "✅"
@@ -641,27 +617,6 @@ func renderReplyTarget(state Model) string {
 		header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 	}
 	return replyHeaderStyle.Render(header)
-}
-
-func replyPreview(body string) string {
-	text := strings.TrimSpace(body)
-	if text == "" {
-		return ""
-	}
-	lines := strings.Split(text, "\n")
-	const maxLines = 3
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-	}
-	const maxLineLen = 120
-	for i, line := range lines {
-		runes := []rune(strings.TrimSpace(line))
-		if len(runes) > maxLineLen {
-			runes = append(runes[:maxLineLen-1], '…')
-		}
-		lines[i] = string(runes)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func normalizeBlock(text string, width int, height int) string {

@@ -98,45 +98,6 @@ func (c *Client) CallGraphQL(ctx context.Context, query string, variables map[st
 	return nil
 }
 
-func (c *Client) FetchTree(ctx context.Context, owner, repo, commit string) ([]TreeEntry, error) {
-	if owner == "" || repo == "" || commit == "" {
-		return nil, errors.New("missing owner, repo, or commit")
-	}
-	path := fmt.Sprintf("repos/%s/%s/git/trees/%s", owner, repo, commit)
-	args := []string{"api", path, "--paginate", "-F", "recursive=1"}
-	raw, err := c.run(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var payload struct {
-		Tree []TreeEntry `json:"tree"`
-	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil, err
-	}
-	return payload.Tree, nil
-}
-
-func (c *Client) FetchBlob(ctx context.Context, owner, repo, sha string) (*Blob, error) {
-	if owner == "" || repo == "" || sha == "" {
-		return nil, errors.New("missing owner, repo, or blob")
-	}
-	path := fmt.Sprintf("repos/%s/%s/git/blobs/%s", owner, repo, sha)
-	args := []string{"api", path}
-	raw, err := c.run(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var blob Blob
-	if err := json.Unmarshal([]byte(raw), &blob); err != nil {
-		return nil, err
-	}
-	if blob.Encoding != "base64" {
-		return nil, fmt.Errorf("unsupported blob encoding: %s", blob.Encoding)
-	}
-	return &blob, nil
-}
-
 func (c *Client) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
 	if owner == "" || repo == "" || commit == "" || path == "" {
 		return nil, errors.New("missing owner, repo, commit, or path")
@@ -240,17 +201,6 @@ func (c *Client) runBytes(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, errors.New(msg)
 	}
 	return stdout.Bytes(), nil
-}
-
-type TreeEntry struct {
-	Path string `json:"path"`
-	Type string `json:"type"`
-	SHA  string `json:"sha"`
-}
-
-type Blob struct {
-	Content  string `json:"content"`
-	Encoding string `json:"encoding"`
 }
 
 type PullRequestSummary struct {

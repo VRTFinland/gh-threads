@@ -52,8 +52,6 @@ type teaModel struct {
 	statusIndex           int
 	showStatus            bool
 	showHelp              bool
-	showFilterMenu        bool
-	filterIndex           int
 	authorSuggestionIndex int
 	statusSuggestionIndex int
 	loading               bool
@@ -122,8 +120,6 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilter(msg)
 		case StateStatus:
 			return m.updateStatus(msg)
-		case StateFilterMenu:
-			return m.updateFilterMenu(msg)
 		case StateHelp:
 			return m.updateHelp(msg)
 		default:
@@ -445,35 +441,6 @@ func (m *teaModel) updateStatus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *teaModel) updateFilterMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.showFilterMenu = false
-		m.state.state = StateView
-	case "j", "down":
-		if m.filterIndex < 2 {
-			m.filterIndex++
-		}
-	case "k", "up":
-		if m.filterIndex > 0 {
-			m.filterIndex--
-		}
-	case "enter":
-		switch m.filterIndex {
-		case 1:
-			m.state.filters.Status = threads.StatusResolved
-		case 2:
-			m.state.filters.Status = threads.StatusUnresolved
-		default:
-			m.state.filters.Status = threads.StatusAll
-		}
-		m.state.applyFilters()
-		m.showFilterMenu = false
-		m.state.state = StateView
-	}
-	return m, nil
-}
-
 func (m *teaModel) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -503,7 +470,7 @@ func (m *teaModel) View() string {
 		m.replyInput.SetWidth(width - 2)
 		m.adjustReplyHeight()
 	}
-	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showFilterMenu, m.filterIndex, m.showHelp, m.state.state, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
+	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showHelp, m.state.state, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
 }
 
 func (m *teaModel) adjustReplyHeight() {
