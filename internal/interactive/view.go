@@ -377,13 +377,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 		return b.String(), anchor
 	}
 
-	maxComments := vmax(1, maxHeight/6)
-	if !state.detailExpanded {
-		maxComments = vmin(len(thread.Comments), vmax(3, maxComments))
-	}
-	if maxComments > len(thread.Comments) {
-		maxComments = len(thread.Comments)
-	}
+	maxComments := detailCommentBudget(maxHeight, state.detailExpanded, len(thread.Comments))
 	selected := clamp(state.selectedComment, 0, len(thread.Comments)-1)
 	start := 0
 	if selected >= maxComments {
@@ -398,12 +392,12 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 			header = fmt.Sprintf("%s (%s)", header, linkStyle.Render(comment.URL))
 		}
 		headerMarker := "  "
-		if i == state.selectedComment {
+		if i == selected {
 			headerMarker = selectedMarkerStyle.Render(" >")
 		}
 		indentWidth := vmax(2, lipgloss.Width(xansi.Strip(headerMarker)))
 		bodyMarker := strings.Repeat(" ", indentWidth)
-		if i == state.selectedComment {
+		if i == selected {
 			anchor.start = lineCount()
 			b.WriteString(headerMarker)
 			b.WriteString(commentHighlightStyle.Render(header))
@@ -419,10 +413,10 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
-		if i == state.selectedComment {
+		if i == selected {
 			anchor.end = lineCount()
 		}
-		if currentState == StateReply && i == state.selectedComment {
+		if currentState == StateReply && i == selected {
 			header := strings.TrimSpace(renderReplyTarget(state))
 			if header != "" {
 				b.WriteString(header)
@@ -463,6 +457,17 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 		}
 	}
 	return b.String(), anchor
+}
+
+// detailCommentBudget reports how many comments the detail pane may draw.
+// Expanded fits as many as the pane height allows; collapsed is a compact peek
+// at the selected comment, and must never show more than expanded would.
+func detailCommentBudget(maxHeight int, expanded bool, total int) int {
+	budget := vmax(1, maxHeight/6)
+	if !expanded {
+		budget = 1
+	}
+	return vmax(1, vmin(total, budget))
 }
 
 // windowDetailBlock scrolls content so the anchored range stays visible within

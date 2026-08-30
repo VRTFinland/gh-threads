@@ -31,8 +31,8 @@ func TestRenderDetailCollapsedKeepsFirstCommentVisible(t *testing.T) {
 		detailMode:      detailSnippet,
 	}
 	out := renderDetailContent(model, 5, StateView, textarea.New(), 80)
-	if !strings.Contains(out, "first") || !strings.Contains(out, "second") {
-		t.Fatalf("expected first and second comments to be shown: %s", out)
+	if !strings.Contains(out, "first") {
+		t.Fatalf("expected the first comment to be shown: %s", out)
 	}
 }
 
@@ -55,8 +55,8 @@ func TestRenderDetailCollapsedShowsSelectedComment(t *testing.T) {
 		detailMode:      detailSnippet,
 	}
 	out := stripANSI(renderDetailContent(model, 5, StateView, textarea.New(), 80))
-	if !strings.Contains(out, "third") || !strings.Contains(out, "first") {
-		t.Fatalf("expected first and selected comment to be shown, got %s", out)
+	if !strings.Contains(out, "third") {
+		t.Fatalf("expected the selected comment to be shown, got %s", out)
 	}
 }
 
@@ -720,5 +720,37 @@ func BenchmarkRenderThreadList(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		renderThreadList(model, 12, 120)
+	}
+}
+
+func detailModel(comments int) Model {
+	list := make([]threads.ThreadComment, 0, comments)
+	for i := 0; i < comments; i++ {
+		list = append(list, threads.ThreadComment{
+			ID: fmt.Sprintf("c%d", i), Author: "alice", Body: fmt.Sprintf("body-%d", i),
+		})
+	}
+	return Model{
+		threads:         []threads.ReviewThread{{ThreadID: "t1", Path: "file.go", Comments: list}},
+		filteredIndexes: []int{0},
+		selectedThread:  0,
+		detailMode:      detailSnippet,
+	}
+}
+
+func TestRenderDetailCollapsedNeverShowsMoreThanExpanded(t *testing.T) {
+	model := detailModel(8)
+	for height := 1; height <= 60; height++ {
+		model.detailExpanded = true
+		expanded := strings.Count(stripANSI(renderDetailContent(model, height, StateView, textarea.New(), 80)), "body-")
+		model.detailExpanded = false
+		collapsed := strings.Count(stripANSI(renderDetailContent(model, height, StateView, textarea.New(), 80)), "body-")
+
+		if collapsed > expanded {
+			t.Fatalf("height=%d: collapsed showed %d comments, expanded only %d", height, collapsed, expanded)
+		}
+		if collapsed < 1 {
+			t.Fatalf("height=%d: collapsed must still show the selected comment", height)
+		}
 	}
 }
