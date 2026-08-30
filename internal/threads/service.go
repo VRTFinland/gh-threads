@@ -87,6 +87,7 @@ query(
               originalLine
               path
               startLine
+              originalStartLine
               url
               author { login }
               originalCommit { oid }
@@ -117,6 +118,7 @@ query($threadId: ID!, $cursor: String) {
           originalLine
           path
           startLine
+          originalStartLine
           url
           author { login }
           originalCommit { oid }
@@ -192,19 +194,20 @@ type ghAuthor struct {
 }
 
 type ghComment struct {
-	ID             string    `json:"id"`
-	DatabaseID     int       `json:"databaseId"`
-	Body           string    `json:"body"`
-	CreatedAt      string    `json:"createdAt"`
-	UpdatedAt      string    `json:"updatedAt"`
-	DiffHunk       string    `json:"diffHunk"`
-	Line           *int      `json:"line"`
-	OriginalLine   *int      `json:"originalLine"`
-	StartLine      *int      `json:"startLine"`
-	Path           string    `json:"path"`
-	URL            string    `json:"url"`
-	Author         *ghAuthor `json:"author"`
-	OriginalCommit struct {
+	ID                string    `json:"id"`
+	DatabaseID        int       `json:"databaseId"`
+	Body              string    `json:"body"`
+	CreatedAt         string    `json:"createdAt"`
+	UpdatedAt         string    `json:"updatedAt"`
+	DiffHunk          string    `json:"diffHunk"`
+	Line              *int      `json:"line"`
+	OriginalLine      *int      `json:"originalLine"`
+	StartLine         *int      `json:"startLine"`
+	OriginalStartLine *int      `json:"originalStartLine"`
+	Path              string    `json:"path"`
+	URL               string    `json:"url"`
+	Author            *ghAuthor `json:"author"`
+	OriginalCommit    struct {
 		OID string `json:"oid"`
 	} `json:"originalCommit"`
 }
@@ -573,19 +576,20 @@ func (s *Service) FetchPullRequestInfo(ctx context.Context, ghCtx Context) (Pull
 
 func convertComment(comment ghComment) ThreadComment {
 	return ThreadComment{
-		ID:           comment.ID,
-		DatabaseID:   comment.DatabaseID,
-		Author:       normaliseAuthor(comment.Author),
-		Body:         comment.Body,
-		CreatedAt:    comment.CreatedAt,
-		UpdatedAt:    comment.UpdatedAt,
-		Path:         comment.Path,
-		Line:         comment.Line,
-		OriginalLine: comment.OriginalLine,
-		StartLine:    comment.StartLine,
-		DiffHunk:     comment.DiffHunk,
-		URL:          comment.URL,
-		CommitSHA:    comment.OriginalCommit.OID,
+		ID:                comment.ID,
+		DatabaseID:        comment.DatabaseID,
+		Author:            normaliseAuthor(comment.Author),
+		Body:              comment.Body,
+		CreatedAt:         comment.CreatedAt,
+		UpdatedAt:         comment.UpdatedAt,
+		Path:              comment.Path,
+		Line:              comment.Line,
+		OriginalLine:      comment.OriginalLine,
+		StartLine:         comment.StartLine,
+		OriginalStartLine: comment.OriginalStartLine,
+		DiffHunk:          comment.DiffHunk,
+		URL:               comment.URL,
+		CommitSHA:         comment.OriginalCommit.OID,
 	}
 }
 

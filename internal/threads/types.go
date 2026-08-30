@@ -18,20 +18,21 @@ type ConversationComment struct {
 }
 
 type ThreadComment struct {
-	ID           string             `json:"id"`
-	DatabaseID   int                `json:"database_id,omitempty"`
-	Author       string             `json:"author"`
-	Body         string             `json:"body"`
-	CreatedAt    string             `json:"created_at"`
-	UpdatedAt    string             `json:"updated_at,omitempty"`
-	Path         string             `json:"path"`
-	Line         *int               `json:"line"`
-	OriginalLine *int               `json:"original_line"`
-	StartLine    *int               `json:"start_line"`
-	DiffHunk     string             `json:"diff_hunk"`
-	URL          string             `json:"url"`
-	CommitSHA    string             `json:"commit_sha,omitempty"`
-	Snippet      *HistoricalSnippet `json:"historical_snippet,omitempty"`
+	ID                string             `json:"id"`
+	DatabaseID        int                `json:"database_id,omitempty"`
+	Author            string             `json:"author"`
+	Body              string             `json:"body"`
+	CreatedAt         string             `json:"created_at"`
+	UpdatedAt         string             `json:"updated_at,omitempty"`
+	Path              string             `json:"path"`
+	Line              *int               `json:"line"`
+	OriginalLine      *int               `json:"original_line"`
+	StartLine         *int               `json:"start_line"`
+	OriginalStartLine *int               `json:"original_start_line"`
+	DiffHunk          string             `json:"diff_hunk"`
+	URL               string             `json:"url"`
+	CommitSHA         string             `json:"commit_sha,omitempty"`
+	Snippet           *HistoricalSnippet `json:"historical_snippet,omitempty"`
 }
 
 type ReviewThread struct {

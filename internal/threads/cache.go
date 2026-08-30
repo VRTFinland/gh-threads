@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const cacheVersion = 1
+// cacheVersion 2 adds ThreadComment.OriginalStartLine. Entries written by
+// version 1 deserialise it as nil, which would silently keep the old
+// single-line suggestion ranges, so they are dropped instead.
+const cacheVersion = 2
 
 type Cache interface {
 	Load(Context) (*Entry, error)

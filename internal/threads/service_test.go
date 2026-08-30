@@ -335,3 +335,40 @@ func TestFetchReviewThreadsSurvivesSnippetFailure(t *testing.T) {
 		t.Fatalf("expected a warning to be logged, got %q", logs.String())
 	}
 }
+
+func TestFetchReviewThreadsRequestsAndMapsOriginalStartLine(t *testing.T) {
+	fake := &fakeClient{
+		graphQLJSON: `{"repository":{"pullRequest":{"reviewThreads":{
+			"nodes":[{"id":"t1","path":"file.go","comments":{"nodes":[
+				{"id":"c1","body":"b","path":"file.go",
+				 "line":118,"startLine":116,
+				 "originalLine":120,"originalStartLine":115}
+			],"pageInfo":{"hasNextPage":false}}}],
+			"pageInfo":{"hasNextPage":false}}}}}`,
+	}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+
+	result, err := svc.FetchReviewThreads(context.Background(), Context{Owner: "o", Repo: "r"}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, query := range fake.graphQLCalls {
+		if !strings.Contains(query, "originalStartLine") {
+			t.Fatalf("expected the query to request originalStartLine, got:\n%s", query)
+		}
+	}
+	comment := result[0].Comments[0]
+	if comment.OriginalStartLine == nil || *comment.OriginalStartLine != 115 {
+		t.Fatalf("expected originalStartLine to be mapped, got %v", comment.OriginalStartLine)
+	}
+	if comment.StartLine == nil || *comment.StartLine != 116 {
+		t.Fatalf("expected startLine to still be mapped, got %v", comment.StartLine)
+	}
+}
+
+func TestCacheVersionRejectsOlderEntries(t *testing.T) {
+	if cacheVersion < 2 {
+		t.Fatalf("cacheVersion must be bumped so entries without OriginalStartLine are dropped, got %d", cacheVersion)
+	}
+}
