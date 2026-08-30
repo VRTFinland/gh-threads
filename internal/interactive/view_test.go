@@ -648,3 +648,77 @@ func TestRenderDetailBlockKeepsSelectionVisibleWhenScrolled(t *testing.T) {
 		t.Fatalf("expected selected comment body to stay on screen, got:\n%s", out)
 	}
 }
+
+func listModel(n int) Model {
+	list := make([]threads.ReviewThread, 0, n)
+	indexes := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		list = append(list, threads.ReviewThread{
+			ThreadID: fmt.Sprintf("t%d", i),
+			Path:     fmt.Sprintf("pkg/file%d.go", i/2),
+			Comments: []threads.ThreadComment{{ID: fmt.Sprintf("c%d", i), Author: "alice", Body: fmt.Sprintf("body-%d", i)}},
+		})
+		indexes = append(indexes, i)
+	}
+	return Model{threads: list, filteredIndexes: indexes}
+}
+
+func TestRenderThreadListShowsSelectionAtEveryHeight(t *testing.T) {
+	model := listModel(6)
+	for _, height := range []int{1, 2, 3, 5} {
+		for selected := 0; selected < 6; selected++ {
+			model.selectedThread = selected
+			model.listOffset = 0
+			out := stripANSI(renderThreadList(model, height, 100))
+			if got := len(strings.Split(out, "\n")); got != height {
+				t.Fatalf("height=%d selected=%d: expected %d lines, got %d", height, selected, height, got)
+			}
+			want := fmt.Sprintf("body-%d", selected)
+			if !strings.Contains(out, want) {
+				t.Fatalf("height=%d selected=%d: expected %q on screen, got:\n%s", height, selected, want, out)
+			}
+		}
+	}
+}
+
+func TestRenderThreadListIgnoresStaleOffsetPastSelection(t *testing.T) {
+	model := listModel(6)
+	model.selectedThread = 0
+	model.listOffset = 5
+
+	out := stripANSI(renderThreadList(model, 4, 100))
+
+	if !strings.Contains(out, "body-0") {
+		t.Fatalf("expected the selection to win over a stale offset, got:\n%s", out)
+	}
+}
+
+func TestThreadListStartStaysWithinBounds(t *testing.T) {
+	model := listModel(6)
+	for _, height := range []int{1, 2, 3, 5, 20} {
+		for selected := 0; selected < 6; selected++ {
+			for _, offset := range []int{0, 3, 5} {
+				got := threadListStart(model.threads, offset, selected, height)
+				if got > selected {
+					t.Fatalf("h=%d sel=%d off=%d: start %d scrolled past the selection", height, selected, offset, got)
+				}
+				if got < 0 || got >= len(model.threads) {
+					t.Fatalf("h=%d sel=%d off=%d: start %d out of range", height, selected, offset, got)
+				}
+				if height <= 2 && got != selected {
+					t.Fatalf("h=%d sel=%d: no room for context, expected start=%d got %d", height, selected, selected, got)
+				}
+			}
+		}
+	}
+}
+
+func BenchmarkRenderThreadList(b *testing.B) {
+	model := listModel(400)
+	model.selectedThread = 399
+	model.listOffset = 0
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		renderThreadList(model, 12, 120)
+	}
+}

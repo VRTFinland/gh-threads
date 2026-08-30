@@ -92,46 +92,68 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 }
 
 func renderThreadList(state Model, height int, width int) string {
-	threads := state.FilteredThreads()
-	if len(threads) == 0 {
+	list := state.FilteredThreads()
+	if len(list) == 0 {
 		return normalizeBlock("No threads match current filters.", width, height)
 	}
-	window := vmax(1, height)
-	start := clamp(state.listOffset, 0, max(0, len(threads)-window))
-	pathCounts := summarizePaths(threads)
-	lines, selectionLine := buildThreadListLines(threads, start, window, height, width, state.selectedThread, pathCounts)
-	for (selectionLine == -1 || selectionLine >= height) && start < len(threads)-1 {
-		start++
-		lines, selectionLine = buildThreadListLines(threads, start, window, height, width, state.selectedThread, pathCounts)
-	}
-	content := strings.Join(lines, "\n")
-	return normalizeBlock(content, width, height)
+	height = vmax(1, height)
+	pathCounts := summarizePaths(list)
+	start := threadListStart(list, state.listOffset, state.selectedThread, height)
+	lines := buildThreadListLines(list, start, height, width, state.selectedThread, pathCounts)
+	return normalizeBlock(strings.Join(lines, "\n"), width, height)
 }
 
-func buildThreadListLines(threads []threads.ReviewThread, start int, window int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) ([]string, int) {
-	lines := make([]string, 0, window+4)
-	selectionLine := -1
-	end := vmin(len(threads), start+window)
-	lastPath := ""
-	for idx := start; idx < end; idx++ {
-		thread := threads[idx]
-		if idx == start || thread.Path != lastPath {
-			counts := pathCounts[thread.Path]
-			header := fmt.Sprintf("%s [%d resolved, %d unresolved]", thread.Path, counts.resolved, counts.unresolved)
-			lines = append(lines, pathHeaderStyle.Render(padListLine(header, width)))
-			lastPath = thread.Path
+// threadListStart picks the first thread to draw so the selected one always
+// fits within height lines, scrolling back no further than the model's offset.
+// Line cost is monotone in start (one line per entry, plus one for each path it
+// opens), so a single backward walk from the selection is exact -- the old code
+// re-rendered the whole window on every retry, and could never satisfy a height
+// that left no room for a path header.
+func threadListStart(list []threads.ReviewThread, desired, selected, height int) int {
+	selected = clamp(selected, 0, len(list)-1)
+	// A stale offset past the selection must never win, or the selected thread
+	// scrolls off the top and the pane looks frozen.
+	desired = clamp(desired, 0, selected)
+	start := selected
+	used := vmin(2, height) // the selected entry, plus its path header if it fits
+	for candidate := selected - 1; candidate >= desired; candidate-- {
+		next := used + 2 // the candidate's entry, plus the header it now owns
+		if list[candidate].Path == list[candidate+1].Path {
+			next-- // the entry below no longer needs a header of its own
 		}
-		isLastInPath := idx == len(threads)-1 || threads[idx+1].Path != thread.Path
-		line := renderThreadListEntry(thread, isLastInPath, selectedThread == idx, width)
-		lines = append(lines, line)
-		if selectedThread == idx {
-			selectionLine = len(lines) - 1
-		}
-		if len(lines) >= height {
+		if next > height {
 			break
 		}
+		used, start = next, candidate
 	}
-	return lines, selectionLine
+	return start
+}
+
+func buildThreadListLines(list []threads.ReviewThread, start int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) []string {
+	lines := make([]string, 0, height)
+	lastPath := ""
+	for idx := start; idx < len(list) && len(lines) < height; idx++ {
+		thread := list[idx]
+		if idx == start || thread.Path != lastPath {
+			// A header only earns a line when the entry it introduces fits too.
+			// The first one may be dropped -- at height 1 there is room for the
+			// selected entry only -- but a mid-list one may not, or the entry
+			// below would appear to belong to the previous path.
+			fits := len(lines)+1 < height
+			if !fits && idx != start {
+				break
+			}
+			if fits {
+				counts := pathCounts[thread.Path]
+				header := fmt.Sprintf("%s [%d resolved, %d unresolved]", thread.Path, counts.resolved, counts.unresolved)
+				lines = append(lines, pathHeaderStyle.Render(padListLine(header, width)))
+			}
+			lastPath = thread.Path
+		}
+		isLastInPath := idx == len(list)-1 || list[idx+1].Path != thread.Path
+		lines = append(lines, renderThreadListEntry(thread, isLastInPath, selectedThread == idx, width))
+	}
+	return lines
 }
 
 func renderThreadListEntry(thread threads.ReviewThread, isLastInPath bool, selected bool, width int) string {
