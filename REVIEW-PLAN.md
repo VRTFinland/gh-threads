@@ -5,7 +5,8 @@ Korvaa aiemman `REVIEW-TODO.md`:n. Jokainen löydös on varmistettu koodista
 **Katselmointiraportti oli osin väärässä** — ks. "Korjaukset katselmointiin".
 
 Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori),
-**`3d89998` (vaihe 1: hakukerros, löydökset 1 ja 7b)**.
+**`3d89998` (vaihe 1: hakukerros, löydökset 1 ja 7b)**,
+**`077413b` (vaihe 2: render.go, löydökset 5 ja 8)**.
 
 ## Yhteenveto
 
@@ -15,11 +16,11 @@ Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori),
 | 2 | `commentLineRange` koordinaatistot | Vahvistettu | ~60 r + GraphQL | 4 |
 | 3 | Listakorkeus 1 | Vahvistettu, **2 lisävikaa** | ~35 r | 3 |
 | 4 | Kutistettu > laajennettu | Vahvistettu, **vaatii testimuutokset** | ~8 r | 3 |
-| 5 | Kommentin body katoaa | Osittain vahvistettu | ~25 r | 2 |
+| 5 | Kommentin body katoaa | Osittain vahvistettu | ~25 r | 2 ✅ |
 | 6 | Status-suodatin hiljaa | Vahvistettu | ~12 r | 3 |
 | 7a | `threadPreview` per frame | Vahvistettu, 195 µs/kutsu | ~25 r | 3 |
 | 7b | Duplikaatti GraphQL-kutsu | Vahvistettu, **määrä liioiteltu** | ~40 r | 1 ✅ |
-| 8 | `compactSnippetLines` tyhjät rivit | Vahvistettu | ~20 r | 2 |
+| 8 | `compactSnippetLines` tyhjät rivit | Vahvistettu | ~20 r | 2 ✅ |
 
 ---
 
@@ -202,7 +203,7 @@ interaktiivisesta refresh-goroutinesta → lisää `sync.Mutex` tai kommentti.
 
 ---
 
-# Vaihe 2 — render.go
+# Vaihe 2 — render.go ✅ VALMIS (`077413b`)
 
 ## 2.1 `compactSnippetLines` (löydös 8) — tee tämä ensin
 
