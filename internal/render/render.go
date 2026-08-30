@@ -403,21 +403,51 @@ func formatDiff(diff string, colour bool, newLine, oldLine *int) []string {
 	return out
 }
 
+// commentLineRange returns the comment's anchor in the coordinate space the
+// historical snippet is built in. attachHistoricalSnippets prefers OriginalLine
+// and reads the file at the original commit, so the Original* pair must be
+// taken as a pair: mixing OriginalLine with StartLine, which is a position in
+// the current diff, marked the wrong lines as removed whenever the file had
+// shifted, and collapsed a multi-line anchor to one line on outdated threads
+// where GitHub reports no current lines at all.
 func commentLineRange(comment threads.ThreadComment) (*int, *int) {
-	end := firstNonNil(comment.OriginalLine, comment.Line)
-	start := end
-	if comment.StartLine != nil {
-		start = comment.StartLine
+	if comment.OriginalLine != nil {
+		return orderedRange(comment.OriginalStartLine, comment.OriginalLine, anchorSpan(comment))
 	}
-	if start == nil || end == nil {
+	if comment.Line != nil {
+		return orderedRange(comment.StartLine, comment.Line, 0)
+	}
+	return nil, nil
+}
+
+// orderedRange builds a start<=end pair. Without an explicit start it falls back
+// to span, then to a single line.
+func orderedRange(start, end *int, span int) (*int, *int) {
+	if end == nil {
 		return nil, nil
 	}
-	startVal := *start
 	endVal := *end
+	startVal := endVal
+	switch {
+	case start != nil:
+		startVal = *start
+	case span > 0:
+		startVal = endVal - span
+	}
 	if startVal > endVal {
 		startVal, endVal = endVal, startVal
 	}
 	return &startVal, &endVal
+}
+
+// anchorSpan recovers an anchor's length from the current-space pair, for
+// comments cached before originalStartLine was requested. The length of a
+// multi-line anchor is a property of the comment, not of the commit.
+func anchorSpan(comment threads.ThreadComment) int {
+	if comment.StartLine != nil && comment.Line != nil && *comment.Line >= *comment.StartLine {
+		return *comment.Line - *comment.StartLine
+	}
+	return 0
 }
 
 func trimAroundHighlights(entries []diffEntry, hasTarget bool) []diffEntry {

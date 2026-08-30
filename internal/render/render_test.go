@@ -303,3 +303,92 @@ func TestPrintCommentBlock_ReportsWhetherItPrinted(t *testing.T) {
 		t.Fatal("expected a real body to report it printed")
 	}
 }
+
+func intPtr(v int) *int { return &v }
+
+func TestCommentLineRange(t *testing.T) {
+	cases := []struct {
+		name       string
+		comment    threads.ThreadComment
+		start, end *int
+	}{
+		{
+			name: "prefers the original pair over the current one",
+			comment: threads.ThreadComment{
+				Line: intPtr(118), StartLine: intPtr(116),
+				OriginalLine: intPtr(120), OriginalStartLine: intPtr(115),
+			},
+			start: intPtr(115), end: intPtr(120),
+		},
+		{
+			name: "outdated comment with no current lines",
+			comment: threads.ThreadComment{
+				OriginalLine: intPtr(120), OriginalStartLine: intPtr(115),
+			},
+			start: intPtr(115), end: intPtr(120),
+		},
+		{
+			name:    "falls back to the current pair without an original line",
+			comment: threads.ThreadComment{Line: intPtr(40), StartLine: intPtr(38)},
+			start:   intPtr(38), end: intPtr(40),
+		},
+		{
+			name:    "single line comment",
+			comment: threads.ThreadComment{OriginalLine: intPtr(12)},
+			start:   intPtr(12), end: intPtr(12),
+		},
+		{
+			name: "derives the start from the span for a cached comment",
+			comment: threads.ThreadComment{
+				Line: intPtr(118), StartLine: intPtr(116),
+				OriginalLine: intPtr(120),
+			},
+			start: intPtr(118), end: intPtr(120),
+		},
+		{
+			name:    "no line information at all",
+			comment: threads.ThreadComment{},
+			start:   nil, end: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStart, gotEnd := commentLineRange(tc.comment)
+			if !reflect.DeepEqual(gotStart, tc.start) || !reflect.DeepEqual(gotEnd, tc.end) {
+				t.Fatalf("got (%v, %v), want (%v, %v)",
+					derefOrNil(gotStart), derefOrNil(gotEnd), derefOrNil(tc.start), derefOrNil(tc.end))
+			}
+		})
+	}
+}
+
+func derefOrNil(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange proves the
+// coordinate fix end to end: the removed lines must come from the anchor
+// expressed in the snippet's own (original commit) space.
+func TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange(t *testing.T) {
+	body := "```suggestion\nreplacement\n```"
+	comment := threads.ThreadComment{
+		Line: intPtr(17), StartLine: intPtr(16),
+		OriginalLine: intPtr(12), OriginalStartLine: intPtr(11),
+	}
+	snippet := &threads.HistoricalSnippet{
+		Commit: "abcdef123", Path: "file.go", StartLine: 10, HighlightLine: 12,
+		Lines: []string{"first", "second", "third", "fourth"}, // lines 10..13
+	}
+
+	start, end := commentLineRange(comment)
+	lines := renderCommentSnippet(body, false, 80, snippet, start, end, false)
+
+	expected := []string{"- second", "- third", "+ replacement"}
+	if !reflect.DeepEqual(lines, expected) {
+		t.Fatalf("expected the original-space range 11-12 to be removed, got %v", lines)
+	}
+}
