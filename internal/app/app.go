@@ -165,6 +165,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 				return info, convo, refreshedThreads, nil
 			},
 		}
+		// The TUI owns the screen from here on; stray warnings would corrupt it.
+		service.SetLogWriter(io.Discard)
 		return interactive.Run(cfg)
 	}
 

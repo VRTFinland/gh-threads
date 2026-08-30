@@ -1,8 +1,13 @@
 package threads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -21,15 +26,21 @@ func (s *stubCache) Save(Context, *Entry) error {
 }
 
 type fakeClient struct {
-	issueUpdates  bool
-	reviewUpdates bool
-	graphQLCalls  []string
-	restPath      string
-	restBody      map[string]string
+	issueUpdates   bool
+	reviewUpdates  bool
+	graphQLCalls   []string
+	restPath       string
+	restBody       map[string]string
+	fileLinesCalls []string
+	fileLinesFn    func(commit, path string) ([]string, error)
+	graphQLJSON    string
 }
 
 func (f *fakeClient) CallGraphQL(ctx context.Context, query string, variables map[string]string, target any) error {
 	f.graphQLCalls = append(f.graphQLCalls, query)
+	if f.graphQLJSON != "" && target != nil {
+		return json.Unmarshal([]byte(f.graphQLJSON), target)
+	}
 	return nil
 }
 func (f *fakeClient) HasIssueCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error) {
@@ -40,6 +51,10 @@ func (f *fakeClient) HasReviewCommentUpdates(ctx context.Context, owner, repo st
 }
 
 func (f *fakeClient) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
+	f.fileLinesCalls = append(f.fileLinesCalls, commit+":"+path)
+	if f.fileLinesFn != nil {
+		return f.fileLinesFn(commit, path)
+	}
 	return nil, nil
 }
 
@@ -199,4 +214,124 @@ func (f *fakeClient) PostREST(ctx context.Context, method, path string, body map
 	f.restPath = path
 	f.restBody = body
 	return nil
+}
+
+func threadWithComments(n int, commit, path string) []ReviewThread {
+	comments := make([]ThreadComment, 0, n)
+	for i := 0; i < n; i++ {
+		line := i + 1
+		comments = append(comments, ThreadComment{
+			ID:           "c" + strconv.Itoa(i),
+			CommitSHA:    commit,
+			Path:         path,
+			OriginalLine: &line,
+		})
+	}
+	return []ReviewThread{{ThreadID: "t1", Path: path, Comments: comments}}
+}
+
+func TestFetchLocalOrRemoteQueriesMissingFileOnce(t *testing.T) {
+	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return nil, nil }}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	reviewThreads := threadWithComments(5, "abc", "gone.go")
+
+	if _, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := len(fake.fileLinesCalls); got != 1 {
+		t.Fatalf("expected a missing file to be fetched once, got %d calls: %v", got, fake.fileLinesCalls)
+	}
+}
+
+func TestFetchLocalOrRemoteReusesCacheAcrossFetches(t *testing.T) {
+	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return nil, nil }}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	ghCtx := Context{Owner: "o", Repo: "r"}
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.attachHistoricalSnippets(context.Background(), ghCtx, threadWithComments(2, "abc", "gone.go")); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	if got := len(fake.fileLinesCalls); got != 1 {
+		t.Fatalf("expected the negative result to be cached across refreshes, got %d calls", got)
+	}
+}
+
+func TestAttachHistoricalSnippetsSkipsMissingBlobWithoutError(t *testing.T) {
+	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return nil, nil }}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	reviewThreads := threadWithComments(1, "abc", "gone.go")
+
+	failed, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
+
+	if err != nil || failed != 0 {
+		t.Fatalf("a missing blob is not a failure, got failed=%d err=%v", failed, err)
+	}
+	if reviewThreads[0].Comments[0].Snippet != nil {
+		t.Fatalf("expected no snippet for a missing blob")
+	}
+}
+
+func TestAttachHistoricalSnippetsSurvivesFetchFailure(t *testing.T) {
+	fake := &fakeClient{fileLinesFn: func(commit, path string) ([]string, error) {
+		if path == "bad.go" {
+			return nil, errors.New("API rate limit exceeded")
+		}
+		return []string{"one", "two", "three"}, nil
+	}}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	line := 2
+	reviewThreads := []ReviewThread{{ThreadID: "t1", Comments: []ThreadComment{
+		{ID: "bad", CommitSHA: "abc", Path: "bad.go", OriginalLine: &line},
+		{ID: "good", CommitSHA: "abc", Path: "good.go", OriginalLine: &line},
+	}}}
+
+	failed, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
+
+	if failed != 1 || err == nil {
+		t.Fatalf("expected the failure to be reported, got failed=%d err=%v", failed, err)
+	}
+	if reviewThreads[0].Comments[0].Snippet != nil {
+		t.Fatalf("expected no snippet for the failed file")
+	}
+	if reviewThreads[0].Comments[1].Snippet == nil {
+		t.Fatalf("expected the healthy file to still get a snippet")
+	}
+}
+
+func TestFetchReviewThreadsSurvivesSnippetFailure(t *testing.T) {
+	logs := &bytes.Buffer{}
+	fake := &fakeClient{
+		graphQLJSON: `{"repository":{"pullRequest":{"reviewThreads":{
+			"nodes":[{"id":"t1","path":"file.go","comments":{"nodes":[
+				{"id":"c1","body":"a comment","originalLine":2,"path":"file.go",
+				 "originalCommit":{"oid":"abc"}}
+			],"pageInfo":{"hasNextPage":false}}}],
+			"pageInfo":{"hasNextPage":false}}}}}`,
+		fileLinesFn: func(string, string) ([]string, error) {
+			return nil, errors.New("API rate limit exceeded")
+		},
+	}
+	svc := NewService(fake, nil, &stubCache{}, logs)
+
+	result, err := svc.FetchReviewThreads(context.Background(), Context{Owner: "o", Repo: "r"}, true)
+
+	if err != nil {
+		t.Fatalf("a snippet failure must not abort the command, got %v", err)
+	}
+	if len(result) != 1 || len(result[0].Comments) != 1 {
+		t.Fatalf("expected the thread and its comment to survive, got %+v", result)
+	}
+	if result[0].Comments[0].Body != "a comment" {
+		t.Fatalf("expected the comment body to survive, got %q", result[0].Comments[0].Body)
+	}
+	if result[0].Comments[0].Snippet != nil {
+		t.Fatalf("expected no snippet after a failed fetch")
+	}
+	if !strings.Contains(logs.String(), "Warning") {
+		t.Fatalf("expected a warning to be logged, got %q", logs.String())
+	}
 }

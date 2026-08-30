@@ -3,13 +3,16 @@ package gitremote
 import (
 	"context"
 	"errors"
-
-	"github.com/VRTFinland/gh-threads/internal/ghcli"
 )
 
+// FileLinesFetcher is the subset of the GitHub client the cache needs.
+type FileLinesFetcher interface {
+	FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error)
+}
+
 type Cache struct {
-	client    *ghcli.Client
-	fileLines map[fileKey][]string
+	client  FileLinesFetcher
+	entries map[fileKey]cacheEntry
 }
 
 type fileKey struct {
@@ -17,26 +20,36 @@ type fileKey struct {
 	path   string
 }
 
-func New(client *ghcli.Client) *Cache {
+type cacheEntry struct {
+	lines []string
+	found bool
+}
+
+func New(client FileLinesFetcher) *Cache {
 	return &Cache{
-		client:    client,
-		fileLines: make(map[fileKey][]string),
+		client:  client,
+		entries: make(map[fileKey]cacheEntry),
 	}
 }
 
-func (c *Cache) GetLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
+// GetLines reports found=false, with a nil error, when the blob does not exist
+// at that commit. The negative result is cached so a missing file is fetched
+// once per process; errors are deliberately not cached, since a rate-limited or
+// interrupted fetch should be retried on the next refresh.
+func (c *Cache) GetLines(ctx context.Context, owner, repo, commit, path string) (lines []string, found bool, err error) {
 	if commit == "" || path == "" {
-		return nil, errors.New("invalid commit or path")
+		return nil, false, errors.New("invalid commit or path")
 	}
 	key := fileKey{commit: commit, path: path}
-	if lines, ok := c.fileLines[key]; ok {
-		return lines, nil
+	if entry, ok := c.entries[key]; ok {
+		return entry.lines, entry.found, nil
 	}
 
-	lines, err := c.client.FileLines(ctx, owner, repo, commit, path)
+	fetched, err := c.client.FileLines(ctx, owner, repo, commit, path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	c.fileLines[key] = lines
-	return lines, nil
+	entry := cacheEntry{lines: fetched, found: len(fetched) > 0}
+	c.entries[key] = entry
+	return entry.lines, entry.found, nil
 }

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/VRTFinland/gh-threads/internal/ghcli"
 	"github.com/VRTFinland/gh-threads/internal/gitlocal"
 	"github.com/VRTFinland/gh-threads/internal/gitremote"
 )
@@ -32,20 +31,23 @@ type GitHubClient interface {
 }
 
 func NewService(client GitHubClient, localRepo *gitlocal.Repo, cacheManager Cache, logWriter io.Writer) *Service {
-	var remote *gitremote.Cache
-	if real, ok := client.(*ghcli.Client); ok {
-		remote = gitremote.New(real)
-	}
 	svc := &Service{
 		client:      client,
 		localRepo:   localRepo,
-		remoteCache: remote,
+		remoteCache: gitremote.New(client),
 		cache:       cacheManager,
 		logWriter:   logWriter,
 	}
 	svc.fetchConversation = svc.FetchConversationComments
 	svc.fetchReview = svc.FetchReviewThreads
 	return svc
+}
+
+// SetLogWriter redirects diagnostic output. The interactive UI owns the
+// terminal via the alternate screen, so writing warnings to stderr while it
+// runs would corrupt the rendering; callers mute the service for its duration.
+func (s *Service) SetLogWriter(w io.Writer) {
+	s.logWriter = w
 }
 
 func (s *Service) logf(format string, args ...any) {
@@ -375,8 +377,8 @@ func (s *Service) FetchData(
 			return nil, nil, fmt.Errorf("failed to refresh thread statuses: %w", err)
 		}
 		if includeHistory {
-			if err := s.attachHistoricalSnippets(ctx, ghCtx, review); err != nil {
-				s.logf("Warning: failed to refresh snippets (%v).", err)
+			if failed, err := s.attachHistoricalSnippets(ctx, ghCtx, review); err != nil {
+				s.logf("Warning: could not load code context for %d file(s): %v", failed, err)
 			}
 		}
 	}
@@ -448,8 +450,8 @@ func (s *Service) FetchReviewThreads(ctx context.Context, ghCtx Context, include
 	}
 
 	if includeHistory {
-		if err := s.attachHistoricalSnippets(ctx, ghCtx, threads); err != nil {
-			return nil, err
+		if failed, err := s.attachHistoricalSnippets(ctx, ghCtx, threads); err != nil {
+			s.logf("Warning: could not load code context for %d file(s): %v", failed, err)
 		}
 	}
 
@@ -606,7 +608,15 @@ type fileKey struct {
 	path   string
 }
 
-func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) error {
+// attachHistoricalSnippets attaches code context to comments. Snippets are
+// decoration: a failed fetch degrades the output but is never fatal, so the
+// number of (commit, path) pairs that could not be read is reported alongside
+// the first error instead of aborting the whole command.
+func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) (int, error) {
+	var (
+		failed   int
+		firstErr error
+	)
 	cache := make(map[fileKey][]string)
 	for threadIdx := range threads {
 		for commentIdx := range threads[threadIdx].Comments {
@@ -624,11 +634,14 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 			key := fileKey{commit: comment.CommitSHA, path: comment.Path}
 			lines, ok := cache[key]
 			if !ok {
-				var err error
-				lines, err = s.fetchLocalOrRemote(ctx, ghCtx, key.commit, key.path)
+				fetched, err := s.fetchLocalOrRemote(ctx, ghCtx, key.commit, key.path)
 				if err != nil {
-					return err
+					failed++
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
+				lines = fetched
 				cache[key] = lines
 			}
 			if len(lines) == 0 {
@@ -639,27 +652,28 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 			}
 		}
 	}
-	return nil
+	return failed, firstErr
 }
 
 func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {
 	if s.localRepo != nil && s.localRepo.Available() {
-		lines, err := s.localRepo.FileLines(ctx, commit, path)
-		if err == nil && len(lines) > 0 {
+		if lines, err := s.localRepo.FileLines(ctx, commit, path); err == nil && len(lines) > 0 {
 			return lines, nil
 		}
 	}
-	if s.remoteCache != nil {
-		lines, err := s.remoteCache.GetLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
-		if err == nil && len(lines) > 0 {
-			return lines, nil
-		}
+	if s.remoteCache == nil {
+		return s.client.FileLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
 	}
-	return s.fetchFileLines(ctx, ghCtx, commit, path)
-}
-
-func (s *Service) fetchFileLines(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {
-	return s.client.FileLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
+	lines, found, err := s.remoteCache.GetLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		// Definitively absent at this commit: retrying the same query would
+		// only repeat the miss.
+		return nil, nil
+	}
+	return lines, nil
 }
 
 type snippetBlock struct {

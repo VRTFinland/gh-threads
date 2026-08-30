@@ -148,3 +148,38 @@ func TestDumpJSON_ColourisedAndPlain(t *testing.T) {
 		t.Fatalf("expected plain JSON output without colour codes, got %q", plain)
 	}
 }
+
+// TestPrintSummary_RendersBodyWhenSnippetMissing locks in the fallback that the
+// non-fatal snippet fetching in threads.attachHistoricalSnippets relies on: when
+// a snippet could not be loaded, the comment itself must still be printed.
+func TestPrintSummary_RendersBodyWhenSnippetMissing(t *testing.T) {
+	line := 12
+	payload := threads.BuildPayload(
+		threads.Context{Owner: "o", Repo: "r", PullRequest: 1},
+		nil,
+		[]threads.ReviewThread{
+			{
+				Path: "file.go",
+				Line: &line,
+				Comments: []threads.ThreadComment{
+					{
+						Author:    "alice",
+						Body:      "Needs change",
+						CreatedAt: "2024-01-02T15:04:05Z",
+						Path:      "file.go",
+						Line:      &line,
+						Snippet:   nil,
+					},
+				},
+			},
+		},
+	)
+
+	for _, showDiff := range []bool{true, false} {
+		var buf bytes.Buffer
+		PrintSummary(&buf, payload, Options{Width: 80, ShowDiff: showDiff})
+		if !strings.Contains(buf.String(), "Needs change") {
+			t.Fatalf("showDiff=%v: expected the body to be printed without a snippet, got:\n%s", showDiff, buf.String())
+		}
+	}
+}
