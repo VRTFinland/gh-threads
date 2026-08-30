@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -82,9 +83,14 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 			comment := thread.Comments[commentIdx]
 			header := formatCommentHeader(comment.Author, comment.CreatedAt, comment.URL, colour)
 			printMultiline(w, "        - ", "          ", header)
-			hasSnippet := comment.Snippet != nil && len(comment.Snippet.Lines) > 0
-			shouldRenderBody := !(commentIdx == 0 && hasSnippet)
-			if shouldRenderBody {
+			// Render the snippet first but hold it back: it may carry the body
+			// beside its highlighted line, and only it knows whether it did.
+			var snippetOut bytes.Buffer
+			bodyEmitted := false
+			if commentIdx == 0 {
+				bodyEmitted = printHistoricalSnippet(&snippetOut, comment.Snippet, colour, opts.Width, comment, opts.Markdown)
+			}
+			if !bodyEmitted {
 				lines := renderCommentBody(comment.Body, opts.Markdown, width)
 				for _, line := range lines {
 					printMultiline(w, "          ", "          ", line)
@@ -92,7 +98,7 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 			}
 
 			if commentIdx == 0 {
-				printHistoricalSnippet(w, comment.Snippet, colour, opts.Width, comment, opts.Markdown)
+				snippetOut.WriteTo(w)
 				if opts.ShowDiff {
 					diffLines := formatDiff(comment.DiffHunk, colour, comment.Line, comment.OriginalLine)
 					if len(diffLines) > 0 {
@@ -296,7 +302,11 @@ type diffEntry struct {
 	highlight bool
 }
 
-func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, colour bool, width int, comment threads.ThreadComment, markdown bool) bool {
+// printHistoricalSnippet reports whether comment.Body was emitted as part of the
+// snippet. Callers must print the body themselves when it returns false: the
+// body is only shown beside the highlighted line, and that line is not always
+// reached (an out-of-range HighlightLine, or a body that renders to nothing).
+func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, colour bool, width int, comment threads.ThreadComment, markdown bool) (bodyEmitted bool) {
 	if snippet == nil || len(snippet.Lines) == 0 {
 		return false
 	}
@@ -313,11 +323,11 @@ func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, col
 		isHighlight := lineNo == snippet.HighlightLine
 		content := emphasize(line, colour, isHighlight)
 		fmt.Fprintf(w, "            %5d  %s\n", lineNo, content)
-		if isHighlight {
-			printCommentBlock(w, comment.Body, width, colour, markdown, snippet, startLine, endLine)
+		if isHighlight && printCommentBlock(w, comment.Body, width, colour, markdown, snippet, startLine, endLine) {
+			bodyEmitted = true
 		}
 	}
-	return true
+	return bodyEmitted
 }
 
 func formatDiff(diff string, colour bool, newLine, oldLine *int) []string {
@@ -582,7 +592,9 @@ var (
 	darkGreen = colouriser{code: "32"}
 )
 
-func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, startLine, endLine *int) {
+// printCommentBlock reports whether it printed anything, so the caller can fall
+// back to printing the body itself.
+func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, startLine, endLine *int) bool {
 	blockWidth := clamp(width-12, 40, 120)
 	innerWidth := blockWidth - 4
 	if innerWidth < 10 {
@@ -591,7 +603,7 @@ func printCommentBlock(w io.Writer, body string, width int, colour bool, markdow
 
 	lines := compactSnippetLines(renderCommentSnippet(body, markdown, innerWidth, snippet, startLine, endLine, colour))
 	if len(lines) == 0 {
-		return
+		return false
 	}
 
 	border := "┌" + strings.Repeat("─", innerWidth+2) + "┐"
@@ -615,6 +627,7 @@ func printCommentBlock(w io.Writer, body string, width int, colour bool, markdow
 		fmt.Fprintf(w, "            %s %s %s\n", left, content, right)
 	}
 	fmt.Fprintf(w, "            %s\n", borderColour(bottom))
+	return true
 }
 
 func renderCommentSnippet(body string, markdown bool, width int, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool) []string {
@@ -712,13 +725,29 @@ func padRightVisible(text string, width int) string {
 	return text + strings.Repeat(" ", width-visible)
 }
 
+// isVisuallyBlank reports whether a line carries no visible text. Judging this
+// on the raw string would treat an ANSI-coloured blank line as non-blank, which
+// made padding survive in colour mode but not when piped.
+func isVisuallyBlank(line string) bool {
+	return strings.TrimSpace(ansiEscapeRegexp.ReplaceAllString(line, "")) == ""
+}
+
+// compactSnippetLines trims blank padding from the ends of a rendered comment
+// while preserving interior blanks: paragraph breaks and blank lines inside
+// fenced code blocks are part of the content, not padding.
 func compactSnippetLines(lines []string) []string {
-	var result []string
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		result = append(result, line)
+	start := 0
+	for start < len(lines) && isVisuallyBlank(lines[start]) {
+		start++
 	}
-	return result
+	end := len(lines)
+	for end > start && isVisuallyBlank(lines[end-1]) {
+		end--
+	}
+	if start >= end {
+		return nil
+	}
+	out := make([]string, end-start)
+	copy(out, lines[start:end])
+	return out
 }

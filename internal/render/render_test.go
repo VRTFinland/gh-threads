@@ -183,3 +183,123 @@ func TestPrintSummary_RendersBodyWhenSnippetMissing(t *testing.T) {
 		}
 	}
 }
+
+func snippetPayload(body string, snippet *threads.HistoricalSnippet) threads.Payload {
+	line := 12
+	return threads.BuildPayload(
+		threads.Context{Owner: "o", Repo: "r", PullRequest: 1},
+		nil,
+		[]threads.ReviewThread{{
+			Path: "file.go",
+			Line: &line,
+			Comments: []threads.ThreadComment{{
+				Author:    "alice",
+				Body:      body,
+				CreatedAt: "2024-01-02T15:04:05Z",
+				Path:      "file.go",
+				Line:      &line,
+				Snippet:   snippet,
+			}},
+		}},
+	)
+}
+
+func TestCompactSnippetLines_TrimsOnlyEdges(t *testing.T) {
+	got := compactSnippetLines([]string{"", "  ", "a", "", "b", "", ""})
+	want := []string{"a", "", "b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected only edge padding to be trimmed, got %q", got)
+	}
+}
+
+func TestCompactSnippetLines_AllBlankReturnsNil(t *testing.T) {
+	if got := compactSnippetLines([]string{"", "   ", "\x1b[0m"}); got != nil {
+		t.Fatalf("expected nil for an all-blank render, got %q", got)
+	}
+}
+
+func TestCompactSnippetLines_StripsAnsiOnlyPadding(t *testing.T) {
+	got := compactSnippetLines([]string{"\x1b[0m", "text", "\x1b[38;5;252m  \x1b[0m"})
+	want := []string{"text"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected ANSI-only padding to count as blank, got %q", got)
+	}
+}
+
+func TestCompactSnippetLines_PreservesBlankInsideFencedCode(t *testing.T) {
+	body := "```go\nfunc a() {\n\n\tb()\n}\n```"
+	rendered := renderCommentSnippet(body, false, 60, nil, nil, nil, false)
+	got := compactSnippetLines(rendered)
+
+	blanks := 0
+	for i, line := range got {
+		if strings.TrimSpace(line) == "" && i > 0 && i < len(got)-1 {
+			blanks++
+		}
+	}
+	if blanks == 0 {
+		t.Fatalf("expected the blank line inside the fenced block to survive, got %q", got)
+	}
+}
+
+func TestPrintSummary_BoxKeepsParagraphBreaks(t *testing.T) {
+	snippet := &threads.HistoricalSnippet{
+		Commit: "abcdef123", Path: "file.go", StartLine: 10, HighlightLine: 12,
+		Lines: []string{"first", "second", "target"},
+	}
+	var buf bytes.Buffer
+	PrintSummary(&buf, snippetPayload("First para.\n\nSecond para.", snippet), Options{Width: 100})
+
+	if !strings.Contains(buf.String(), "First para.") || !strings.Contains(buf.String(), "Second para.") {
+		t.Fatalf("expected both paragraphs, got:\n%s", buf.String())
+	}
+	blankRow := false
+	for _, line := range strings.Split(buf.String(), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "│") && strings.TrimSpace(strings.Trim(trimmed, "│")) == "" {
+			blankRow = true
+		}
+	}
+	if !blankRow {
+		t.Fatalf("expected the paragraph break to survive as a blank box row, got:\n%s", buf.String())
+	}
+}
+
+func TestPrintSummary_RendersBodyWhenHighlightOutsideSnippet(t *testing.T) {
+	snippet := &threads.HistoricalSnippet{
+		Commit: "abcdef123", Path: "file.go", StartLine: 10, HighlightLine: 99,
+		Lines: []string{"first", "second", "target"},
+	}
+	var buf bytes.Buffer
+	PrintSummary(&buf, snippetPayload("Needs change", snippet), Options{Width: 100})
+
+	if got := strings.Count(buf.String(), "Needs change"); got != 1 {
+		t.Fatalf("expected the body exactly once when the highlight is out of range, got %d:\n%s", got, buf.String())
+	}
+}
+
+func TestPrintSummary_RendersBodyWhenHighlightLineZero(t *testing.T) {
+	snippet := &threads.HistoricalSnippet{
+		Commit: "abcdef123", Path: "file.go", StartLine: 10, HighlightLine: 0,
+		Lines: []string{"first", "second", "target"},
+	}
+	var buf bytes.Buffer
+	PrintSummary(&buf, snippetPayload("Needs change", snippet), Options{Width: 100})
+
+	if got := strings.Count(buf.String(), "Needs change"); got != 1 {
+		t.Fatalf("expected the body exactly once for an unset highlight line, got %d:\n%s", got, buf.String())
+	}
+}
+
+func TestPrintCommentBlock_ReportsWhetherItPrinted(t *testing.T) {
+	var buf bytes.Buffer
+	if printCommentBlock(&buf, "   ", 100, false, false, nil, nil, nil) {
+		t.Fatal("expected an all-blank body to report nothing printed")
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output for an all-blank body, got %q", buf.String())
+	}
+	if !printCommentBlock(&buf, "real text", 100, false, false, nil, nil, nil) {
+		t.Fatal("expected a real body to report it printed")
+	}
+}
