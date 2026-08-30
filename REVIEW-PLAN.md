@@ -6,19 +6,24 @@ Korvaa aiemman `REVIEW-TODO.md`:n. Jokainen löydös on varmistettu koodista
 
 Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori),
 **`3d89998` (vaihe 1: hakukerros, löydökset 1 ja 7b)**,
-**`077413b` (vaihe 2: render.go, löydökset 5 ja 8)**.
+**`077413b` (vaihe 2: render.go, löydökset 5 ja 8)**,
+**vaihe 3** (`817258a`, `bc9d1ed`, `9b50376`, `f9ac931`),
+**vaihe 4** (`1f2f944`, `7a3a1fc`).
+
+**Kaikki yhdeksän löydöstä on korjattu.** Jäljellä vain alla oleva
+`formatThreadLines`-jatkotyö.
 
 ## Yhteenveto
 
 | # | Löydös | Verdikti | Koko | Vaihe |
 |---|--------|----------|------|-------|
 | 1 | `includeHistory` fataali snippet-virhe | Vahvistettu, **diagnoosi väärä** | ~5 r | 1 ✅ |
-| 2 | `commentLineRange` koordinaatistot | Vahvistettu | ~60 r + GraphQL | 4 |
-| 3 | Listakorkeus 1 | Vahvistettu, **2 lisävikaa** | ~35 r | 3 |
-| 4 | Kutistettu > laajennettu | Vahvistettu, **vaatii testimuutokset** | ~8 r | 3 |
+| 2 | `commentLineRange` koordinaatistot | Vahvistettu | ~60 r + GraphQL | 4 ✅ |
+| 3 | Listakorkeus 1 | Vahvistettu, **2 lisävikaa** | ~35 r | 3 ✅ |
+| 4 | Kutistettu > laajennettu | Vahvistettu, **vaatii testimuutokset** | ~8 r | 3 ✅ |
 | 5 | Kommentin body katoaa | Osittain vahvistettu | ~25 r | 2 ✅ |
-| 6 | Status-suodatin hiljaa | Vahvistettu | ~12 r | 3 |
-| 7a | `threadPreview` per frame | Vahvistettu, 195 µs/kutsu | ~25 r | 3 |
+| 6 | Status-suodatin hiljaa | Vahvistettu | ~12 r | 3 ✅ |
+| 7a | `threadPreview` per frame | Vahvistettu, 195 µs/kutsu | ~25 r | 3 ✅ |
 | 7b | Duplikaatti GraphQL-kutsu | Vahvistettu, **määrä liioiteltu** | ~40 r | 1 ✅ |
 | 8 | `compactSnippetLines` tyhjät rivit | Vahvistettu | ~20 r | 2 ✅ |
 
@@ -278,7 +283,7 @@ muuttumattomana.
 
 ---
 
-# Vaihe 3 — TUI
+# Vaihe 3 — TUI ✅ VALMIS
 
 ## 3.0 Step 0 -siivous
 
@@ -434,7 +439,7 @@ avain = polku + aloitusrivi + rivit yhdistettynä.
 
 ---
 
-# Vaihe 4 — GraphQL-skeema (löydös 2)
+# Vaihe 4 — GraphQL-skeema (löydös 2) ✅ VALMIS
 
 **Juurisyy:** `render.go:396-411` — `end` suosii `OriginalLine`ia (sama
 koordinaatisto kuin snippetillä), `start` tulee `StartLine`stä (nykyisen diffin
@@ -504,14 +509,17 @@ go build ./... && go vet ./... && go test ./...
 ```
 
 Projektissa ei ole linteriä eikä tyyppitarkistinta Go-työkaluketjun lisäksi.
-`make test` ajaa `go test ./...`; **`go vet ./...` kannattaa lisätä
-Makefileen**.
+`make check` ajaa `go vet ./...` ja `go test ./...` (lisätty tässä työssä).
 
 # Avoimet päätökset
 
 0. ~~**Vaihe 1:** varoitusten ohjaus interaktiivisessa tilassa~~ — ratkaistu
    `io.Discard`illa (`Service.SetLogWriter`). Statusrivi jää parannukseksi.
-1. **Vaihe 4:** nostetaanko `cacheVersion` 2:een (pakottaa uudelleenhaun) vai
-   luotetaanko pelkkään `spanOf`-fallbackiin? Suositus: molemmat.
-2. Tehdäänkö `formatThreadLines`in thread-tason korjaus samassa vaiheessa 4 vai
-   erikseen?
+1. ~~**Vaihe 4:** `cacheVersion`~~ — nostettu 2:een, ja `anchorSpan`-fallback
+   jätettiin paikalleen.
+2. **AVOIN — ainoa jäljellä oleva työ.** `formatThreadLines` (`view.go:169`)
+   vertaa yhä `thread.StartLine`ä (nykyinen avaruus) `thread.OriginalLine`en
+   (alkuperäinen) ja voi tulostaa väärän rivivälin listassa. Vain näyttövirhe.
+   Korjaus vaatii `originalStartLine`in myös **thread-tasolle**:
+   `service.go:75`, `ghThread`, `types.go` (`ReviewThread`) ja `filter.go`:n
+   kopio. Jätettiin erilliseksi, jotta vaihe 4 pysyi viiden tiedoston rajassa.

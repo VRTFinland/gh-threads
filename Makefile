@@ -2,13 +2,18 @@ APP_NAME ?= gh-threads
 CMD_PATH ?= ./cmd/gh-threads
 DIST_DIR ?= dist
 
-.PHONY: build test clean release release-darwin release-linux release-windows ensure-dist
+.PHONY: build test vet check clean release release-darwin release-linux release-windows ensure-dist
 
 build: ensure-dist ## Build the CLI for the current platform
 	GO111MODULE=on go build -o $(DIST_DIR)/$(APP_NAME) $(CMD_PATH)
 
 test: ## Run the Go test suite
 	GO111MODULE=on go test ./...
+
+vet: ## Run go vet across all packages
+	GO111MODULE=on go vet ./...
+
+check: vet test ## Run vet and the test suite
 
 clean: ## Remove built artifacts
 	rm -rf $(DIST_DIR)
