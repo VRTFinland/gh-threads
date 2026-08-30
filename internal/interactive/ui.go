@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
@@ -250,6 +251,7 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterInput.Focus()
 		return m, textinput.Blink
 	case "f":
+		m.state.errMessage = ""
 		m.state.CycleStatusFilter()
 	case "R":
 		m.loading = true
@@ -318,12 +320,23 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.SetFilterAuthor(value)
 			m.authorSuggestionIndex = -1
 		case "status":
-			filter, chosen := m.chooseStatusFilter(value)
-			if chosen {
-				m.state.filters.Status = filter
-				m.statusSuggestionIndex = -1
-				m.state.applyFilters()
+			// Empty input cancels, like esc -- unless a suggestion is highlighted,
+			// which an empty query still lists.
+			if strings.TrimSpace(value) == "" && m.statusSuggestionIndex < 0 {
+				m.state.state = StateView
+				return m, nil
 			}
+			filter, chosen := m.chooseStatusFilter(value)
+			if !chosen {
+				// Stay in the prompt: the bottom bar is drawn in every state, so
+				// the user sees the message and can fix the typo in place.
+				m.state.errMessage = fmt.Sprintf("unknown status %q: use all, resolved or unresolved", strings.TrimSpace(value))
+				return m, nil
+			}
+			m.state.errMessage = ""
+			m.state.filters.Status = filter
+			m.statusSuggestionIndex = -1
+			m.state.applyFilters()
 		default:
 			m.state.SetFilterText(value)
 		}

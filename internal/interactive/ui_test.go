@@ -140,3 +140,61 @@ func TestUpdateReplyKeepsCursorPositionWithinText(t *testing.T) {
 		t.Fatalf("expected cursor to stay where the user moved it, got %q", got)
 	}
 }
+
+func TestUpdateFilterRejectsUnknownStatus(t *testing.T) {
+	model := NewModel(nil, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.state = StateFilter
+	tm.inputPurpose = "status"
+	tm.filterInput.SetValue("x")
+
+	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if tm.state.state != StateFilter {
+		t.Fatalf("expected to stay in the prompt so the typo can be fixed, got %s", tm.state.state)
+	}
+	if tm.state.filters.Status != threads.StatusAll {
+		t.Fatalf("expected the filter to be unchanged, got %q", tm.state.filters.Status)
+	}
+	if !strings.Contains(tm.state.errMessage, "unknown status") {
+		t.Fatalf("expected an error message, got %q", tm.state.errMessage)
+	}
+	if bar := stripANSI(renderBottomBar(tm.state, 200)); !strings.Contains(bar, "unknown status") {
+		t.Fatalf("expected the message to be visible in the bottom bar, got %q", bar)
+	}
+}
+
+func TestUpdateFilterEmptyStatusCancels(t *testing.T) {
+	model := NewModel(nil, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.state = StateFilter
+	tm.inputPurpose = "status"
+	tm.filterInput.SetValue("")
+
+	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if tm.state.state != StateView {
+		t.Fatalf("expected empty input to cancel, got %s", tm.state.state)
+	}
+	if tm.state.errMessage != "" {
+		t.Fatalf("expected no error for a plain cancel, got %q", tm.state.errMessage)
+	}
+}
+
+func TestUpdateFilterEmptyStatusWithHighlightedSuggestionApplies(t *testing.T) {
+	model := NewModel(nil, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.state = StateFilter
+	tm.inputPurpose = "status"
+	tm.filterInput.SetValue("")
+	tm.statusSuggestionIndex = 2
+
+	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if tm.state.state != StateView {
+		t.Fatalf("expected a highlighted suggestion to apply, got %s", tm.state.state)
+	}
+	if tm.state.filters.Status == threads.StatusAll {
+		t.Fatalf("expected the highlighted suggestion to change the filter, got %q", tm.state.filters.Status)
+	}
+}
