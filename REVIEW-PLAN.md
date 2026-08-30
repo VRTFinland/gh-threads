@@ -4,20 +4,21 @@ Korvaa aiemman `REVIEW-TODO.md`:n. Jokainen löydös on varmistettu koodista
 (kolme rinnakkaista analyysiä + omat tarkistukset) committia `63c9174` vasten.
 **Katselmointiraportti oli osin väärässä** — ks. "Korjaukset katselmointiin".
 
-Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori).
+Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori),
+**`3d89998` (vaihe 1: hakukerros, löydökset 1 ja 7b)**.
 
 ## Yhteenveto
 
 | # | Löydös | Verdikti | Koko | Vaihe |
 |---|--------|----------|------|-------|
-| 1 | `includeHistory` fataali snippet-virhe | Vahvistettu, **diagnoosi väärä** | ~5 r | 1 |
+| 1 | `includeHistory` fataali snippet-virhe | Vahvistettu, **diagnoosi väärä** | ~5 r | 1 ✅ |
 | 2 | `commentLineRange` koordinaatistot | Vahvistettu | ~60 r + GraphQL | 4 |
 | 3 | Listakorkeus 1 | Vahvistettu, **2 lisävikaa** | ~35 r | 3 |
 | 4 | Kutistettu > laajennettu | Vahvistettu, **vaatii testimuutokset** | ~8 r | 3 |
 | 5 | Kommentin body katoaa | Osittain vahvistettu | ~25 r | 2 |
 | 6 | Status-suodatin hiljaa | Vahvistettu | ~12 r | 3 |
 | 7a | `threadPreview` per frame | Vahvistettu, 195 µs/kutsu | ~25 r | 3 |
-| 7b | Duplikaatti GraphQL-kutsu | Vahvistettu, **määrä liioiteltu** | ~40 r | 1 |
+| 7b | Duplikaatti GraphQL-kutsu | Vahvistettu, **määrä liioiteltu** | ~40 r | 1 ✅ |
 | 8 | `compactSnippetLines` tyhjät rivit | Vahvistettu | ~20 r | 2 |
 
 ---
@@ -69,7 +70,7 @@ Ennen vaihetta 3: Step 0 -siivous `view.go`:hon (löydöksen 3 korjaus poistaa
 
 ---
 
-# Vaihe 1 — hakukerros
+# Vaihe 1 — hakukerros ✅ VALMIS (`3d89998`)
 
 ## 1.1 Snippet-virhe ei saa kaataa komentoa
 
@@ -507,10 +508,9 @@ Makefileen**.
 
 # Avoimet päätökset
 
+0. ~~**Vaihe 1:** varoitusten ohjaus interaktiivisessa tilassa~~ — ratkaistu
+   `io.Discard`illa (`Service.SetLogWriter`). Statusrivi jää parannukseksi.
 1. **Vaihe 4:** nostetaanko `cacheVersion` 2:een (pakottaa uudelleenhaun) vai
    luotetaanko pelkkään `spanOf`-fallbackiin? Suositus: molemmat.
-2. **Vaihe 1:** ohjataanko interaktiivisen refreshin varoitukset `io.Discard`iin
-   vai TUI:n statusriville? Statusrivi on parempi, mutta vaatii kanavan
-   `ProgramConfig`iin.
-3. Tehdäänkö `formatThreadLines`in thread-tason korjaus samassa vaiheessa 4 vai
+2. Tehdäänkö `formatThreadLines`in thread-tason korjaus samassa vaiheessa 4 vai
    erikseen?
