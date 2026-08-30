@@ -215,7 +215,7 @@ func threadPreview(thread threads.ReviewThread, maxWidth int) string {
 	body := strings.TrimSpace(thread.Comments[0].Body)
 	sanitized := stripSuggestionBlocks(body)
 	suggestionOnly := isSuggestionBody(body) && strings.TrimSpace(sanitized) == ""
-	rendered := renderCommentMarkdown(sanitized)
+	rendered := cachedCommentMarkdown(sanitized)
 	joined := strings.TrimSpace(strings.Join(rendered, " "))
 	if suggestionOnly {
 		return "suggestion..."
@@ -407,7 +407,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 		}
 		b.WriteString("\n")
 		body := strings.TrimSpace(comment.Body)
-		for _, line := range renderCommentMarkdown(body) {
+		for _, line := range cachedCommentMarkdown(body) {
 			b.WriteString(bodyMarker)
 			b.WriteString(commentBodyStyle.Render(line))
 			b.WriteString("\n")
@@ -933,6 +933,39 @@ func snippetLanguage(path string) string {
 	default:
 		return ext
 	}
+}
+
+const markdownCacheLimit = 1024
+
+var (
+	markdownCacheMu sync.RWMutex
+	markdownCache   = make(map[string][]string, 64)
+)
+
+// cachedCommentMarkdown memoises renderCommentMarkdown, which costs a full
+// goldmark parse per call and ran once per visible thread and comment on every
+// frame. The renderer is a package-level singleton with WithWordWrap(0) and a
+// pinned colour profile, so its output depends on nothing but the body -- and
+// keying on the content rather than a comment ID means an edited comment can
+// never serve a stale render.
+func cachedCommentMarkdown(body string) []string {
+	markdownCacheMu.RLock()
+	lines, ok := markdownCache[body]
+	markdownCacheMu.RUnlock()
+	if !ok {
+		lines = renderCommentMarkdown(body)
+		markdownCacheMu.Lock()
+		if len(markdownCache) >= markdownCacheLimit {
+			markdownCache = make(map[string][]string, 64)
+		}
+		markdownCache[body] = lines
+		markdownCacheMu.Unlock()
+	}
+	// Callers receive a []string they may retain or mutate; never hand out the
+	// cached backing array.
+	out := make([]string, len(lines))
+	copy(out, lines)
+	return out
 }
 
 func renderCommentMarkdown(body string) []string {

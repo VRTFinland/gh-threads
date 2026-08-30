@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -752,5 +753,72 @@ func TestRenderDetailCollapsedNeverShowsMoreThanExpanded(t *testing.T) {
 		if collapsed < 1 {
 			t.Fatalf("height=%d: collapsed must still show the selected comment", height)
 		}
+	}
+}
+
+func resetMarkdownCache() {
+	markdownCacheMu.Lock()
+	markdownCache = make(map[string][]string, 64)
+	markdownCacheMu.Unlock()
+}
+
+func TestCachedCommentMarkdownMatchesUncached(t *testing.T) {
+	resetMarkdownCache()
+	body := "# Title\n\nSome *emphasis* and `code`."
+	if got, want := cachedCommentMarkdown(body), renderCommentMarkdown(body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("cached output differs:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestCachedCommentMarkdownHitsCache(t *testing.T) {
+	resetMarkdownCache()
+	cachedCommentMarkdown("hello")
+	cachedCommentMarkdown("hello")
+
+	markdownCacheMu.RLock()
+	defer markdownCacheMu.RUnlock()
+	if len(markdownCache) != 1 {
+		t.Fatalf("expected one cache entry, got %d", len(markdownCache))
+	}
+}
+
+func TestCachedCommentMarkdownReturnsCopy(t *testing.T) {
+	resetMarkdownCache()
+	first := cachedCommentMarkdown("hello")
+	if len(first) == 0 {
+		t.Fatal("expected rendered output")
+	}
+	first[0] = "mutated"
+
+	if second := cachedCommentMarkdown("hello"); second[0] == "mutated" {
+		t.Fatal("mutating a returned slice poisoned the cache")
+	}
+}
+
+func TestCachedCommentMarkdownEvicts(t *testing.T) {
+	resetMarkdownCache()
+	for i := 0; i < markdownCacheLimit+5; i++ {
+		cachedCommentMarkdown(fmt.Sprintf("body-%d", i))
+	}
+
+	markdownCacheMu.RLock()
+	defer markdownCacheMu.RUnlock()
+	if len(markdownCache) > markdownCacheLimit {
+		t.Fatalf("cache grew past its limit: %d", len(markdownCache))
+	}
+}
+
+func BenchmarkRenderThreadListRichBodies(b *testing.B) {
+	body := strings.Repeat("This is a **realistic** review comment with `code` and a [link](http://x). ", 8)
+	model := listModel(400)
+	for i := range model.threads {
+		model.threads[i].Comments[0].Body = fmt.Sprintf("%s (%d)", body, i)
+	}
+	model.selectedThread = 399
+	model.listOffset = 0
+	resetMarkdownCache()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		renderThreadList(model, 12, 120)
 	}
 }
