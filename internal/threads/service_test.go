@@ -271,6 +271,37 @@ func TestFetchLocalOrRemoteReusesCacheAcrossFetches(t *testing.T) {
 	}
 }
 
+func TestFetchLocalOrRemoteCachesSnippetsAcrossFetches(t *testing.T) {
+	content := make([]string, 200)
+	for i := range content {
+		content[i] = "line " + strconv.Itoa(i+1)
+	}
+	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return content, nil }}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	ghCtx := Context{Owner: "o", Repo: "r"}
+
+	var first *HistoricalSnippet
+	for i := 0; i < 3; i++ {
+		reviewThreads := threadWithComments(2, "abc", "file.go")
+		svc.attachHistoricalSnippets(context.Background(), ghCtx, reviewThreads)
+		snippet := reviewThreads[0].Comments[0].Snippet
+		if snippet == nil {
+			t.Fatalf("fetch %d produced no snippet", i)
+		}
+		if first == nil {
+			first = snippet
+			continue
+		}
+		if snippet.StartLine != first.StartLine || len(snippet.Lines) != len(first.Lines) {
+			t.Fatalf("fetch %d returned a different block: %+v vs %+v", i, snippet, first)
+		}
+	}
+
+	if got := fake.callCount(); got != 1 {
+		t.Fatalf("expected the cut blocks to be reused across refreshes, got %d calls", got)
+	}
+}
+
 func TestAttachHistoricalSnippetsSkipsMissingBlobWithoutError(t *testing.T) {
 	logs := &bytes.Buffer{}
 	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return nil, nil }}

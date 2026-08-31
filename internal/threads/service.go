@@ -38,7 +38,7 @@ func NewService(client GitHubClient, localRepo *gitlocal.Repo, cacheManager Cach
 	svc := &Service{
 		client:      client,
 		localRepo:   localRepo,
-		remoteCache: gitremote.New(client),
+		remoteCache: gitremote.New(client, snippetRadius),
 		cache:       cacheManager,
 		logWriter:   logWriter,
 	}
@@ -635,9 +635,13 @@ func cursorValue(value string) string {
 // discourage many concurrent requests, so this is deliberately modest.
 const blobFetchConcurrency = 8
 
+// snippetRadius is how many lines of context a snippet carries on either side
+// of the commented line.
+const snippetRadius = 7
+
 type blobResult struct {
-	lines []string
-	err   error
+	blocks map[int]gitremote.Block
+	err    error
 }
 
 // snippetTarget is one comment waiting for the file its snippet is cut from.
@@ -645,6 +649,13 @@ type snippetTarget struct {
 	comment *ThreadComment
 	line    int
 	key     fileKey
+}
+
+// fileRequest is one file together with every line a comment anchors to in it,
+// so the file is read once and cut for all of them.
+type fileRequest struct {
+	key   fileKey
+	lines []int
 }
 
 type fileKey struct {
@@ -657,8 +668,8 @@ type fileKey struct {
 // number of (commit, path) pairs that could not be read is reported alongside
 // the first error instead of aborting the whole command.
 func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) {
-	targets, keys := collectSnippetTargets(threads)
-	if len(keys) == 0 {
+	targets, requests := collectSnippetTargets(threads)
+	if len(requests) == 0 {
 		return
 	}
 
@@ -667,27 +678,27 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 	// result slot, which means nothing here is shared and nothing needs a lock.
 	// Errors are recorded rather than returned: a snippet is decoration, and an
 	// errgroup context would cancel the siblings of the first failure.
-	results := make([]blobResult, len(keys))
+	results := make([]blobResult, len(requests))
 	var g errgroup.Group
 	g.SetLimit(blobFetchConcurrency)
-	for i, key := range keys {
+	for i, request := range requests {
 		g.Go(func() error {
-			lines, err := s.fetchLocalOrRemote(ctx, ghCtx, key.commit, key.path)
-			results[i] = blobResult{lines: lines, err: err}
+			blocks, err := s.fetchLocalOrRemote(ctx, ghCtx, request)
+			results[i] = blobResult{blocks: blocks, err: err}
 			return nil
 		})
 	}
 	_ = g.Wait()
 
 	// Build phase, back on one goroutine: comment.Snippet writes need no lock,
-	// and walking the results in key order keeps the reported error the same
+	// and walking the results in request order keeps the reported error the same
 	// from run to run.
-	lines := make(map[fileKey][]string, len(keys))
+	blocks := make(map[fileKey]map[int]gitremote.Block, len(requests))
 	var (
 		failed   int
 		firstErr error
 	)
-	for i, key := range keys {
+	for i, request := range requests {
 		if err := results[i].err; err != nil {
 			failed++
 			if firstErr == nil {
@@ -695,15 +706,19 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 			}
 			continue
 		}
-		lines[key] = results[i].lines
+		blocks[request.key] = results[i].blocks
 	}
 	for _, target := range targets {
-		content := lines[target.key]
-		if len(content) == 0 {
+		block, ok := blocks[target.key][target.line]
+		if !ok {
 			continue
 		}
-		if snippet := buildSnippet(content, target.line, target.key.commit, target.key.path); snippet != nil {
-			target.comment.Snippet = snippet
+		target.comment.Snippet = &HistoricalSnippet{
+			Commit:        target.key.commit,
+			Path:          target.key.path,
+			StartLine:     block.StartLine,
+			HighlightLine: block.HighlightLine,
+			Lines:         block.Lines,
 		}
 	}
 
@@ -713,14 +728,20 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 }
 
 // collectSnippetTargets pairs every comment that still needs a snippet with the
-// file it is cut from, and returns the distinct files in encounter order so the
-// fetch fans out over each one exactly once.
-func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileKey) {
+// file it is cut from, and returns the distinct files in encounter order, each
+// carrying its distinct lines, so the fetch fans out over each file exactly
+// once.
+func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileRequest) {
 	var (
-		targets []snippetTarget
-		keys    []fileKey
+		targets  []snippetTarget
+		requests []fileRequest
 	)
-	seen := make(map[fileKey]bool)
+	index := make(map[fileKey]int)
+	type anchor struct {
+		key  fileKey
+		line int
+	}
+	seen := make(map[anchor]bool)
 	for threadIdx := range threads {
 		for commentIdx := range threads[threadIdx].Comments {
 			comment := &threads[threadIdx].Comments[commentIdx]
@@ -736,79 +757,43 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileKey) 
 			}
 			key := fileKey{commit: comment.CommitSHA, path: comment.Path}
 			targets = append(targets, snippetTarget{comment: comment, line: *linePtr, key: key})
-			if !seen[key] {
-				seen[key] = true
-				keys = append(keys, key)
+
+			at, ok := index[key]
+			if !ok {
+				at = len(requests)
+				index[key] = at
+				requests = append(requests, fileRequest{key: key})
+			}
+			if a := (anchor{key: key, line: *linePtr}); !seen[a] {
+				seen[a] = true
+				requests[at].lines = append(requests[at].lines, *linePtr)
 			}
 		}
 	}
-	return targets, keys
+	return targets, requests
 }
 
-func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {
+// fetchLocalOrRemote cuts one block per requested line of a file, preferring a
+// local checkout of the commit over a remote read.
+func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, request fileRequest) (map[int]gitremote.Block, error) {
 	if s.localRepo != nil && s.localRepo.Available() {
-		if lines, err := s.localRepo.FileLines(ctx, commit, path); err == nil && len(lines) > 0 {
-			return lines, nil
+		if lines, err := s.localRepo.FileLines(ctx, request.key.commit, request.key.path); err == nil && len(lines) > 0 {
+			return cutAll(lines, request.lines), nil
 		}
 	}
-	lines, found, err := s.remoteCache.GetLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		// Definitively absent at this commit: retrying the same query would
-		// only repeat the miss.
-		return nil, nil
-	}
-	return lines, nil
+	// A file absent at this commit comes back as an empty result, not an error:
+	// retrying the same query would only repeat the miss.
+	return s.remoteCache.Blocks(ctx, ghCtx.Owner, ghCtx.Repo, request.key.commit, request.key.path, request.lines)
 }
 
-type snippetBlock struct {
-	startLine     int
-	highlightLine int
-	lines         []string
-}
-
-func buildSnippet(lines []string, targetLine int, commit, path string) *HistoricalSnippet {
-	block := snippetAround(lines, targetLine)
-	if block == nil {
-		return nil
+func cutAll(content []string, lines []int) map[int]gitremote.Block {
+	blocks := make(map[int]gitremote.Block, len(lines))
+	for _, line := range lines {
+		if block, ok := gitremote.Cut(content, line, snippetRadius); ok {
+			blocks[line] = block
+		}
 	}
-	return &HistoricalSnippet{
-		Commit:        commit,
-		Path:          path,
-		StartLine:     block.startLine,
-		HighlightLine: block.highlightLine,
-		Lines:         block.lines,
-	}
-}
-
-func snippetAround(lines []string, targetLine int) *snippetBlock {
-	if len(lines) == 0 {
-		return nil
-	}
-	if targetLine < 1 {
-		targetLine = 1
-	}
-	if targetLine > len(lines) {
-		targetLine = len(lines)
-	}
-	index := targetLine - 1
-	start := index - 7
-	if start < 0 {
-		start = 0
-	}
-	end := index + 8
-	if end > len(lines) {
-		end = len(lines)
-	}
-	block := make([]string, end-start)
-	copy(block, lines[start:end])
-	return &snippetBlock{
-		startLine:     start + 1,
-		highlightLine: targetLine,
-		lines:         block,
-	}
+	return blocks
 }
 
 func injectRepoMetadata(threads []ReviewThread, owner, repo string, prNumber int) {
