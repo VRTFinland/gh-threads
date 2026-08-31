@@ -132,10 +132,13 @@ func threadMatchesText(thread threads.ReviewThread, text string) bool {
 	return false
 }
 
-func (m Model) FilteredThreads() []threads.ReviewThread {
-	result := make([]threads.ReviewThread, 0, len(m.filteredIndexes))
+// FilteredThreads returns the visible threads as pointers into the model's own
+// slice. It runs twice per frame over every thread, and copying the structs
+// made a list of four hundred the largest allocation in a keystroke.
+func (m Model) FilteredThreads() []*threads.ReviewThread {
+	result := make([]*threads.ReviewThread, 0, len(m.filteredIndexes))
 	for _, idx := range m.filteredIndexes {
-		result = append(result, m.threads[idx])
+		result = append(result, &m.threads[idx])
 	}
 	return result
 }

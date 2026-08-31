@@ -657,10 +657,10 @@ func listModel(n int) Model {
 
 // threadsWithPaths builds a list whose entries follow the given paths, so a
 // test can shape the path grouping the line cost depends on.
-func threadsWithPaths(paths ...string) []threads.ReviewThread {
-	list := make([]threads.ReviewThread, 0, len(paths))
+func threadsWithPaths(paths ...string) []*threads.ReviewThread {
+	list := make([]*threads.ReviewThread, 0, len(paths))
 	for i, path := range paths {
-		list = append(list, threads.ReviewThread{
+		list = append(list, &threads.ReviewThread{
 			ThreadID: fmt.Sprintf("t%d", i),
 			Path:     path,
 			Comments: []threads.ThreadComment{{ID: fmt.Sprintf("c%d", i), Author: "alice", Body: fmt.Sprintf("body-%d", i)}},
@@ -674,14 +674,14 @@ func threadsWithPaths(paths ...string) []threads.ReviewThread {
 // be; if it counts rows differently from buildThreadListLines, the pane is
 // mis-sized and nothing says so.
 func TestListLineEstimateMatchesWhatIsDrawn(t *testing.T) {
-	cases := map[string][]threads.ReviewThread{
+	cases := map[string][]*threads.ReviewThread{
 		"empty":          {},
 		"single":         threadsWithPaths("a.go"),
 		"one path":       threadsWithPaths("a.go", "a.go", "a.go"),
 		"all distinct":   threadsWithPaths("a.go", "b.go", "c.go"),
 		"grouped":        threadsWithPaths("a.go", "a.go", "b.go", "c.go", "c.go", "c.go"),
 		"path returns":   threadsWithPaths("a.go", "b.go", "a.go"),
-		"generated list": listModel(6).threads,
+		"generated list": listModel(6).FilteredThreads(),
 	}
 
 	for name, list := range cases {
@@ -703,7 +703,7 @@ func TestListLineEstimateMatchesWhatIsDrawn(t *testing.T) {
 }
 
 // costTo is how many lines the renderer needs to draw list[start..selected].
-func costTo(list []threads.ReviewThread, start, selected int, counts map[string]pathSummary) int {
+func costTo(list []*threads.ReviewThread, start, selected int, counts map[string]pathSummary) int {
 	window := list[:selected+1]
 	return len(buildThreadListLines(window, start, 2*len(window)+2, 100, selected, counts))
 }
@@ -711,7 +711,7 @@ func costTo(list []threads.ReviewThread, start, selected int, counts map[string]
 // TestThreadListStartFitsWhatIsDrawn ties the scroll calculation to the same
 // rule: the start it picks must leave the renderer room for the selection.
 func TestThreadListStartFitsWhatIsDrawn(t *testing.T) {
-	lists := [][]threads.ReviewThread{
+	lists := [][]*threads.ReviewThread{
 		threadsWithPaths("a.go", "a.go", "a.go", "a.go"),
 		threadsWithPaths("a.go", "b.go", "c.go", "d.go"),
 		threadsWithPaths("a.go", "a.go", "b.go", "c.go", "c.go", "c.go"),
@@ -784,7 +784,7 @@ func TestThreadListStartStaysWithinBounds(t *testing.T) {
 	for _, height := range []int{1, 2, 3, 5, 20} {
 		for selected := 0; selected < 6; selected++ {
 			for _, offset := range []int{0, 3, 5} {
-				got := threadListStart(model.threads, offset, selected, height)
+				got := threadListStart(model.FilteredThreads(), offset, selected, height)
 				if got > selected {
 					t.Fatalf("h=%d sel=%d off=%d: start %d scrolled past the selection", height, selected, offset, got)
 				}
@@ -874,14 +874,43 @@ func TestCachedCommentMarkdownReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestCachedCommentMarkdownEvicts(t *testing.T) {
-	resetMarkdownCache()
-	for i := 0; i < markdownCacheLimit+5; i++ {
-		cachedCommentMarkdown(fmt.Sprintf("body-%d", i))
+// The cache is budgeted in bytes, not entries: counting keys let a handful of
+// very long comments hold megabytes.
+func TestMemoCacheStaysWithinItsBudget(t *testing.T) {
+	const budget = 1000
+	cache := newMemoCache(budget, func(s string) int { return len(s) }, func(s string) string { return s })
+
+	for i := 0; i < 50; i++ {
+		cache.get(fmt.Sprintf("k%d", i), func() string { return strings.Repeat("x", 100) })
+		if got := cache.weight(); got > budget {
+			t.Fatalf("after %d entries the cache held %d bytes", i+1, got)
+		}
+	}
+	if cache.size() == 0 {
+		t.Fatal("expected the cache to be holding something")
 	}
 
-	if got := markdownCache.size(); got > markdownCacheLimit {
-		t.Fatalf("cache grew past its limit: %d", got)
+	cache.reset()
+	cache.get("huge", func() string { return strings.Repeat("x", budget+1) })
+	if cache.size() != 0 {
+		t.Fatal("a render larger than the whole budget must not be kept")
+	}
+}
+
+func TestMemoCacheServesAndProtectsItsEntries(t *testing.T) {
+	cache := newMemoCache(1000, linesWeight, cloneLines)
+	renders := 0
+	build := func() []string { renders++; return []string{"a", "b"} }
+
+	first := cache.get("k", build)
+	first[0] = "mutated"
+	second := cache.get("k", build)
+
+	if renders != 1 {
+		t.Fatalf("expected one render, got %d", renders)
+	}
+	if second[0] != "a" {
+		t.Fatal("mutating a returned slice poisoned the cache")
 	}
 }
 
@@ -938,7 +967,7 @@ func TestFormatThreadLines(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := formatThreadLines(tc.thread); got != tc.want {
+			if got := formatThreadLines(&tc.thread); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})

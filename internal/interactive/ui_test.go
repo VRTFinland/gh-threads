@@ -1,6 +1,7 @@
 package interactive
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -261,5 +262,25 @@ func TestInitialModelAppliesConfig(t *testing.T) {
 	}
 	if plain.detailMode != detailSnippet {
 		t.Fatal("expected the snippet view by default")
+	}
+}
+
+// BenchmarkView measures a whole frame, which is what a keystroke costs.
+func BenchmarkView(b *testing.B) {
+	body := strings.Repeat("This is a **realistic** review comment with `code` and a [link](http://x). ", 8)
+	model := listModel(400)
+	for i := range model.threads {
+		model.threads[i].Comments[0].Body = fmt.Sprintf("%s (%d)", body, i)
+	}
+	model.selectedThread = 399
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.viewportHeight = 50
+	tm.viewportWidth = 120
+	resetMarkdownCache()
+	previewCache.reset()
+	tm.View() // warm the markdown cache; a session pays this once
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tm.View()
 	}
 }

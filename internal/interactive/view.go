@@ -3,6 +3,7 @@ package interactive
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -125,7 +126,7 @@ const (
 // that sizes the pane, the scroll calculation, and the draw itself -- because
 // the three drifting apart would leave the pane's height quietly disagreeing
 // with what is drawn in it.
-func listRowCost(list []threads.ReviewThread, idx, start int) int {
+func listRowCost(list []*threads.ReviewThread, idx, start int) int {
 	if idx == start || list[idx].Path != list[idx-1].Path {
 		return threadRowLines + pathHeaderLines
 	}
@@ -134,7 +135,7 @@ func listRowCost(list []threads.ReviewThread, idx, start int) int {
 
 // listLineEstimate is how tall the thread list would be with nothing clipping
 // it, which is what the pane asks for before it is told its share.
-func listLineEstimate(list []threads.ReviewThread) int {
+func listLineEstimate(list []*threads.ReviewThread) int {
 	if len(list) == 0 {
 		return 1 // the "no threads" placeholder still needs its line
 	}
@@ -150,7 +151,7 @@ func listLineEstimate(list []threads.ReviewThread) int {
 // Line cost is monotone in start, so a single backward walk from the selection
 // is exact -- the old code re-rendered the whole window on every retry, and
 // could never satisfy a height that left no room for a path header.
-func threadListStart(list []threads.ReviewThread, desired, selected, height int) int {
+func threadListStart(list []*threads.ReviewThread, desired, selected, height int) int {
 	selected = clamp(selected, 0, len(list)-1)
 	// A stale offset past the selection must never win, or the selected thread
 	// scrolls off the top and the pane looks frozen.
@@ -172,7 +173,7 @@ func threadListStart(list []threads.ReviewThread, desired, selected, height int)
 	return start
 }
 
-func buildThreadListLines(list []threads.ReviewThread, start int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) []string {
+func buildThreadListLines(list []*threads.ReviewThread, start int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) []string {
 	lines := make([]string, 0, height)
 	for idx := start; idx < len(list) && len(lines) < height; idx++ {
 		thread := list[idx]
@@ -197,7 +198,7 @@ func buildThreadListLines(list []threads.ReviewThread, start int, height int, wi
 	return lines
 }
 
-func renderThreadListEntry(thread threads.ReviewThread, isLastInPath bool, selected bool, width int) string {
+func renderThreadListEntry(thread *threads.ReviewThread, isLastInPath bool, selected bool, width int) string {
 	branch := "├─"
 	if isLastInPath {
 		branch = "╰─"
@@ -225,7 +226,7 @@ func renderThreadListEntry(thread threads.ReviewThread, isLastInPath bool, selec
 // formatThreadLines renders the thread's position in the list, preferring the
 // current diff: that is where the reader is looking, and an outdated thread
 // falls back to the commit it was written against.
-func formatThreadLines(thread threads.ReviewThread) string {
+func formatThreadLines(thread *threads.ReviewThread) string {
 	anchor := thread.Anchor(threads.CurrentSpace)
 	if !anchor.Valid() {
 		return "?"
@@ -233,7 +234,7 @@ func formatThreadLines(thread threads.ReviewThread) string {
 	return anchor.String()
 }
 
-func firstCommentAuthor(thread threads.ReviewThread) string {
+func firstCommentAuthor(thread *threads.ReviewThread) string {
 	if len(thread.Comments) == 0 {
 		return "unknown"
 	}
@@ -244,11 +245,19 @@ func firstCommentAuthor(thread threads.ReviewThread) string {
 	return author
 }
 
-func threadPreview(thread threads.ReviewThread, maxWidth int) string {
+// threadPreview is memoised because it runs for every drawn row on every
+// keystroke, and measuring and truncating terminal text was a fifth of a frame.
+// Body and width are all it depends on.
+func threadPreview(thread *threads.ReviewThread, maxWidth int) string {
 	if len(thread.Comments) == 0 {
 		return "(no comment)"
 	}
 	body := strings.TrimSpace(thread.Comments[0].Body)
+	key := strconv.Itoa(maxWidth) + "\x00" + body
+	return previewCache.get(key, func() string { return buildThreadPreview(body, maxWidth) })
+}
+
+func buildThreadPreview(body string, maxWidth int) string {
 	sanitized := threads.StripSuggestions(body)
 	suggestionOnly := threads.HasSuggestion(body) && strings.TrimSpace(sanitized) == ""
 	rendered := cachedCommentMarkdown(sanitized)
@@ -296,7 +305,7 @@ type pathSummary struct {
 	unresolved int
 }
 
-func summarizePaths(threads []threads.ReviewThread) map[string]pathSummary {
+func summarizePaths(threads []*threads.ReviewThread) map[string]pathSummary {
 	counts := make(map[string]pathSummary)
 	for _, thread := range threads {
 		current := counts[thread.Path]
@@ -403,7 +412,7 @@ func buildDetailContent(state Model, width, maxHeight int, replyInput textarea.M
 	}
 	var b strings.Builder
 	lineCount := func() int { return strings.Count(b.String(), "\n") }
-	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%s %s", thread.Path, formatThreadLines(*thread), detailStatus(thread))))
+	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%s %s", thread.Path, formatThreadLines(thread), detailStatus(thread))))
 	b.WriteString("\n")
 	if len(thread.Comments) == 0 {
 		return b.String(), anchor
@@ -915,61 +924,109 @@ func snippetLanguage(path string) string {
 	}
 }
 
+// Cache budgets, in bytes of rendered output. Counting entries instead let a
+// handful of very long comments hold megabytes: what costs memory is the text,
+// not the number of keys.
 const (
-	markdownCacheLimit = 1024
-	snippetCacheLimit  = 256
+	markdownCacheBudget = 4 << 20
+	snippetCacheBudget  = 1 << 20
+	previewCacheBudget  = 1 << 20
 )
 
-// renderCache memoises expensive glamour renders by content. Both renderers are
-// package-level singletons with a fixed wrap and colour profile, so their output
+// memoCache memoises expensive renders by content. Every renderer behind one is
+// a package-level singleton with a fixed wrap and colour profile, so its output
 // depends on nothing but the key -- and keying on content rather than an ID
-// means an edited comment can never serve a stale render. A size cap bounds
-// growth over a session.
-type renderCache struct {
+// means an edited comment can never serve a stale render. Reaching the budget
+// drops everything: a session's working set is the handful of comments on
+// screen, so a full rebuild is cheaper than tracking recency.
+type memoCache[V any] struct {
 	mu      sync.RWMutex
-	entries map[string][]string
-	limit   int
+	entries map[string]V
+	bytes   int
+	budget  int
+	weigh   func(V) int
+	clone   func(V) V
 }
 
-func newRenderCache(limit int) *renderCache {
-	return &renderCache{entries: make(map[string][]string, 64), limit: limit}
-}
-
-func (c *renderCache) get(key string, render func() []string) []string {
-	c.mu.RLock()
-	lines, ok := c.entries[key]
-	c.mu.RUnlock()
-	if !ok {
-		lines = render()
-		c.mu.Lock()
-		if len(c.entries) >= c.limit {
-			c.entries = make(map[string][]string, 64)
-		}
-		c.entries[key] = lines
-		c.mu.Unlock()
+func newMemoCache[V any](budget int, weigh func(V) int, clone func(V) V) *memoCache[V] {
+	return &memoCache[V]{
+		entries: make(map[string]V, 64),
+		budget:  budget,
+		weigh:   weigh,
+		clone:   clone,
 	}
-	// Callers receive a []string they may retain or mutate; never hand out the
-	// cached backing array.
-	out := make([]string, len(lines))
-	copy(out, lines)
-	return out
 }
 
-func (c *renderCache) size() int {
+func (c *memoCache[V]) get(key string, render func() V) V {
+	c.mu.RLock()
+	value, ok := c.entries[key]
+	c.mu.RUnlock()
+	if ok {
+		return c.clone(value)
+	}
+
+	value = render()
+	weight := c.weigh(value)
+	if weight > c.budget {
+		// One render larger than the whole budget is not worth keeping: it
+		// would evict everything and then sit there alone.
+		return c.clone(value)
+	}
+	c.mu.Lock()
+	if _, exists := c.entries[key]; !exists {
+		if c.bytes+weight > c.budget {
+			c.entries = make(map[string]V, 64)
+			c.bytes = 0
+		}
+		c.entries[key] = value
+		c.bytes += weight
+	}
+	c.mu.Unlock()
+	return c.clone(value)
+}
+
+func (c *memoCache[V]) size() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)
 }
 
-func (c *renderCache) reset() {
+func (c *memoCache[V]) weight() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.bytes
+}
+
+func (c *memoCache[V]) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string][]string, 64)
+	c.entries = make(map[string]V, 64)
+	c.bytes = 0
+}
+
+// linesWeight counts the bytes a render holds, header included, so a cache of
+// many short entries is charged for its slices too.
+func linesWeight(lines []string) int {
+	total := len(lines) * 16
+	for _, line := range lines {
+		total += len(line)
+	}
+	return total
+}
+
+// cloneLines keeps the cached backing array out of caller hands: a caller may
+// retain or mutate what it is given.
+func cloneLines(lines []string) []string {
+	out := make([]string, len(lines))
+	copy(out, lines)
+	return out
 }
 
 var (
-	markdownCache = newRenderCache(markdownCacheLimit)
-	snippetCache  = newRenderCache(snippetCacheLimit)
+	markdownCache = newMemoCache(markdownCacheBudget, linesWeight, cloneLines)
+	snippetCache  = newMemoCache(snippetCacheBudget, linesWeight, cloneLines)
+	// Strings are immutable, so a preview needs no defensive copy.
+	previewCache = newMemoCache(previewCacheBudget, func(s string) int { return len(s) + 16 }, func(s string) string { return s })
 )
 
 // cachedCommentMarkdown memoises renderCommentMarkdown, which costs a full
