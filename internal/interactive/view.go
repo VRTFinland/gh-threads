@@ -1133,28 +1133,29 @@ func collectDiffLines(entries []diffEntry) []string {
 	return lines
 }
 
-func sectionHeights(total int, listLines int) (int, int) {
-	if total <= 2 {
-		return 1, max(1, total-2)
-	}
-	content := total - 2
-	divider := 1
-	if content <= divider {
-		return 1, max(1, content-divider)
-	}
-	content -= divider
+// sectionHeights splits the viewport between the thread list and the detail
+// pane. Three lines are spoken for before either of them: the two bars and the
+// divider between the panes. The list then takes three tenths of what is left,
+// with a floor of three rows, but never more rows than it has to show, and
+// never so many that the detail pane drops below three lines.
+func sectionHeights(total int, listLines int) (list, detail int) {
+	const (
+		chrome    = 3 // the two bars and the divider
+		listFloor = 3
+		listShare = 3 // tenths
+		minDetail = 3
+	)
+	content := total - chrome
 	if content < 2 {
+		// Too small to split honestly. A line each, and the panes' own
+		// clamping decides what survives.
 		return 1, 1
 	}
-	list := max(3, content*3/10)
-	if list > content-3 {
-		list = max(1, content-3)
-	}
-	maxList := max(1, listLines)
-	list = min(list, maxList)
-	if list >= content {
-		list = max(1, content-1)
-	}
-	detail := content - list
-	return list, detail
+	list = max(listFloor, content*listShare/10)
+	// The detail pane's floor comes first, and it is what keeps the list from
+	// swallowing the whole pane; a content that cannot seat both leaves the
+	// list with its single line.
+	list = max(1, min(list, content-minDetail))
+	list = min(list, max(1, listLines))
+	return list, content - list
 }

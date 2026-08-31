@@ -1091,3 +1091,26 @@ func TestStatusPickerMarksTheCurrentStatus(t *testing.T) {
 		t.Fatalf("unexpected status picker: %q", got)
 	}
 }
+
+// TestSectionHeightsAlwaysSeatsBothPanes pins the invariants the branches exist
+// for, at every size the terminal can be.
+func TestSectionHeightsAlwaysSeatsBothPanes(t *testing.T) {
+	for total := -2; total <= 120; total++ {
+		for _, listLines := range []int{0, 1, 2, 5, 40, 400} {
+			list, detail := sectionHeights(total, listLines)
+			if list < 1 || detail < 1 {
+				t.Fatalf("total=%d lines=%d: a pane got no room (%d, %d)", total, listLines, list, detail)
+			}
+			if listLines >= 1 && list > listLines && list != 1 {
+				t.Fatalf("total=%d lines=%d: list took %d rows for %d", total, listLines, list, listLines)
+			}
+			if total >= 5 && list+detail != total-3 {
+				t.Fatalf("total=%d lines=%d: %d+%d does not fill the %d lines left after the chrome",
+					total, listLines, list, detail, total-3)
+			}
+			if total >= 11 && listLines >= 400 && detail < 3 {
+				t.Fatalf("total=%d: the detail pane fell to %d lines", total, detail)
+			}
+		}
+	}
+}
