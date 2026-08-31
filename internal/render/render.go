@@ -63,10 +63,12 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 		if path == "" {
 			path = "<no file>"
 		}
-		line := firstNonNil(thread.Line, thread.OriginalLine)
+		// The summary lists one line per thread, so only the anchor's end is
+		// printed; taking it from the anchor keeps the choice of coordinate
+		// space in one place.
 		lineDisplay := "?"
-		if line != nil {
-			lineDisplay = fmt.Sprintf("%d", *line)
+		if anchor := thread.Anchor(threads.CurrentSpace); anchor.Valid() {
+			lineDisplay = strconv.Itoa(anchor.End)
 		}
 		status := "unresolved"
 		if thread.IsResolved {
@@ -197,7 +199,7 @@ func renderCommentBody(body string, markdown bool, width int) []string {
 	return lines
 }
 
-func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool, markdown bool) string {
+func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor, colour bool, markdown bool) string {
 	matches := suggestionBlockRegexp.FindAllStringSubmatchIndex(body, -1)
 	if len(matches) == 0 {
 		return body
@@ -208,7 +210,7 @@ func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, st
 	for _, match := range matches {
 		builder.WriteString(body[last:match[0]])
 		content := body[match[2]:match[3]]
-		if replacement := renderSuggestionDiff(content, snippet, startLine, endLine, colour, markdown); replacement != "" {
+		if replacement := renderSuggestionDiff(content, snippet, anchor, colour, markdown); replacement != "" {
 			builder.WriteString(replacement)
 		} else {
 			builder.WriteString(body[match[0]:match[1]])
@@ -220,12 +222,11 @@ func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, st
 	return builder.String()
 }
 
-func renderSuggestionDiff(content string, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool, markdown bool) string {
-	start, end, ok := normalizeLineRange(startLine, endLine)
-	if !ok {
+func renderSuggestionDiff(content string, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor, colour bool, markdown bool) string {
+	if !anchor.Valid() {
 		return ""
 	}
-	original := snippetLinesForRange(snippet, start, end)
+	original := snippetLinesForRange(snippet, anchor)
 	if len(original) == 0 {
 		return ""
 	}
@@ -270,32 +271,23 @@ func formatSuggestionLine(prefix, line string, colour bool, markdown bool) strin
 	}
 }
 
-func snippetLinesForRange(snippet *threads.HistoricalSnippet, start, end int) []string {
+// snippetLinesForRange returns the snippet's own lines under the anchor. The
+// anchor must be measured in SnippetSpace; a range from the current diff would
+// silently point at the wrong lines of an outdated file.
+func snippetLinesForRange(snippet *threads.HistoricalSnippet, anchor threads.LineAnchor) []string {
 	if snippet == nil || len(snippet.Lines) == 0 {
 		return nil
 	}
 	snippetStart := snippet.StartLine
 	snippetEnd := snippet.StartLine + len(snippet.Lines) - 1
-	if start < snippetStart || end > snippetEnd {
+	if anchor.Start < snippetStart || anchor.End > snippetEnd {
 		return nil
 	}
-	startIdx := start - snippetStart
-	endIdx := end - snippetStart
+	startIdx := anchor.Start - snippetStart
+	endIdx := anchor.End - snippetStart
 	lines := make([]string, endIdx-startIdx+1)
 	copy(lines, snippet.Lines[startIdx:endIdx+1])
 	return lines
-}
-
-func normalizeLineRange(start, end *int) (int, int, bool) {
-	if start == nil || end == nil {
-		return 0, 0, false
-	}
-	startVal := *start
-	endVal := *end
-	if startVal > endVal {
-		startVal, endVal = endVal, startVal
-	}
-	return startVal, endVal, true
 }
 
 type diffEntry struct {
@@ -311,7 +303,7 @@ func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, col
 	if snippet == nil || len(snippet.Lines) == 0 {
 		return false
 	}
-	startLine, endLine := commentLineRange(comment)
+	anchor := comment.Anchor(threads.SnippetSpace)
 	commit := snippet.Commit
 	if len(commit) > 7 {
 		commit = commit[:7]
@@ -324,7 +316,7 @@ func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, col
 		isHighlight := lineNo == snippet.HighlightLine
 		content := emphasize(line, colour, isHighlight)
 		fmt.Fprintf(w, "            %5d  %s\n", lineNo, content)
-		if isHighlight && printCommentBlock(w, comment.Body, width, colour, markdown, snippet, startLine, endLine) {
+		if isHighlight && printCommentBlock(w, comment.Body, width, colour, markdown, snippet, anchor) {
 			bodyEmitted = true
 		}
 	}
@@ -404,53 +396,6 @@ func formatDiff(diff string, colour bool, newLine, oldLine *int) []string {
 	return out
 }
 
-// commentLineRange returns the comment's anchor in the coordinate space the
-// historical snippet is built in. attachHistoricalSnippets prefers OriginalLine
-// and reads the file at the original commit, so the Original* pair must be
-// taken as a pair: mixing OriginalLine with StartLine, which is a position in
-// the current diff, marked the wrong lines as removed whenever the file had
-// shifted, and collapsed a multi-line anchor to one line on outdated threads
-// where GitHub reports no current lines at all.
-func commentLineRange(comment threads.ThreadComment) (*int, *int) {
-	if comment.OriginalLine != nil {
-		return orderedRange(comment.OriginalStartLine, comment.OriginalLine, anchorSpan(comment))
-	}
-	if comment.Line != nil {
-		return orderedRange(comment.StartLine, comment.Line, 0)
-	}
-	return nil, nil
-}
-
-// orderedRange builds a start<=end pair. Without an explicit start it falls back
-// to span, then to a single line.
-func orderedRange(start, end *int, span int) (*int, *int) {
-	if end == nil {
-		return nil, nil
-	}
-	endVal := *end
-	startVal := endVal
-	switch {
-	case start != nil:
-		startVal = *start
-	case span > 0:
-		startVal = endVal - span
-	}
-	if startVal > endVal {
-		startVal, endVal = endVal, startVal
-	}
-	return &startVal, &endVal
-}
-
-// anchorSpan recovers an anchor's length from the current-space pair, for
-// comments cached before originalStartLine was requested. The length of a
-// multi-line anchor is a property of the comment, not of the commit.
-func anchorSpan(comment threads.ThreadComment) int {
-	if comment.StartLine != nil && comment.Line != nil && *comment.Line >= *comment.StartLine {
-		return *comment.Line - *comment.StartLine
-	}
-	return 0
-}
-
 func trimAroundHighlights(entries []diffEntry, hasTarget bool) []diffEntry {
 	if !hasTarget {
 		if len(entries) > 15 {
@@ -484,15 +429,6 @@ func printMultiline(w io.Writer, first, rest, text string) {
 		}
 		fmt.Fprintf(w, "%s%s\n", prefix, line)
 	}
-}
-
-func firstNonNil(values ...*int) *int {
-	for _, v := range values {
-		if v != nil {
-			return v
-		}
-	}
-	return nil
 }
 
 func clamp(value, minValue, maxValue int) int {
@@ -611,13 +547,13 @@ var (
 
 // printCommentBlock reports whether it printed anything, so the caller can fall
 // back to printing the body itself.
-func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, startLine, endLine *int) bool {
+func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor) bool {
 	// The inner width and the markdown wrap must agree, or glamour returns lines
 	// wider than the border. renderCommentBody floors its wrap at 40, so the box
 	// floors its inner width at the same place.
 	innerWidth := clamp(width-16, 40, 116)
 
-	lines := compactSnippetLines(renderCommentSnippet(body, markdown, innerWidth, snippet, startLine, endLine, colour))
+	lines := compactSnippetLines(renderCommentSnippet(body, markdown, innerWidth, snippet, anchor, colour))
 	if len(lines) == 0 {
 		return false
 	}
@@ -646,7 +582,7 @@ func printCommentBlock(w io.Writer, body string, width int, colour bool, markdow
 	return true
 }
 
-func renderCommentSnippet(body string, markdown bool, width int, snippet *threads.HistoricalSnippet, startLine, endLine *int, colour bool) []string {
+func renderCommentSnippet(body string, markdown bool, width int, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor, colour bool) []string {
 	body = strings.ReplaceAll(body, "\r\n", "\n")
 	body = strings.ReplaceAll(body, "\r", "\n")
 	body = strings.TrimSpace(body)
@@ -654,7 +590,7 @@ func renderCommentSnippet(body string, markdown bool, width int, snippet *thread
 		return nil
 	}
 
-	resolvedBody := replaceSuggestionBlocks(body, snippet, startLine, endLine, colour, markdown)
+	resolvedBody := replaceSuggestionBlocks(body, snippet, anchor, colour, markdown)
 	if !markdown {
 		return wrapCommentSnippetLines(resolvedBody, width)
 	}

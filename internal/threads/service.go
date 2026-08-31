@@ -737,26 +737,25 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileReque
 		requests []fileRequest
 	)
 	index := make(map[fileKey]int)
-	type anchor struct {
+	type fileLine struct {
 		key  fileKey
 		line int
 	}
-	seen := make(map[anchor]bool)
+	seen := make(map[fileLine]bool)
 	for threadIdx := range threads {
 		for commentIdx := range threads[threadIdx].Comments {
 			comment := &threads[threadIdx].Comments[commentIdx]
 			if comment.Snippet != nil && len(comment.Snippet.Lines) > 0 {
 				continue
 			}
-			linePtr := comment.OriginalLine
-			if linePtr == nil {
-				linePtr = comment.Line
-			}
-			if comment.CommitSHA == "" || comment.Path == "" || linePtr == nil {
+			// The snippet is cut in SnippetSpace, so the line it is centred on
+			// must be read in that space too.
+			anchor := comment.Anchor(SnippetSpace)
+			if comment.CommitSHA == "" || comment.Path == "" || !anchor.Valid() {
 				continue
 			}
 			key := fileKey{commit: comment.CommitSHA, path: comment.Path}
-			targets = append(targets, snippetTarget{comment: comment, line: *linePtr, key: key})
+			targets = append(targets, snippetTarget{comment: comment, line: anchor.End, key: key})
 
 			at, ok := index[key]
 			if !ok {
@@ -764,9 +763,9 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileReque
 				index[key] = at
 				requests = append(requests, fileRequest{key: key})
 			}
-			if a := (anchor{key: key, line: *linePtr}); !seen[a] {
+			if a := (fileLine{key: key, line: anchor.End}); !seen[a] {
 				seen[a] = true
-				requests[at].lines = append(requests[at].lines, *linePtr)
+				requests[at].lines = append(requests[at].lines, anchor.End)
 			}
 		}
 	}

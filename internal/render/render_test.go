@@ -77,8 +77,8 @@ func TestPrintSummary_SkipsDuplicateCommentWhenSnippetShown(t *testing.T) {
 func TestPrintSummary_RendersMarkdownInSnippetBlock(t *testing.T) {
 	commentBody := "**bold** text"
 	width := 64
-	markdownLines := renderCommentSnippet(commentBody, true, width, nil, nil, nil, false)
-	plainLines := renderCommentSnippet(commentBody, false, width, nil, nil, nil, false)
+	markdownLines := renderCommentSnippet(commentBody, true, width, nil, threads.LineAnchor{}, false)
+	plainLines := renderCommentSnippet(commentBody, false, width, nil, threads.LineAnchor{}, false)
 	if reflect.DeepEqual(markdownLines, plainLines) {
 		t.Fatalf("expected markdown rendering to differ from plain snippet lines; got %v", markdownLines)
 	}
@@ -91,8 +91,7 @@ func TestPrintSummary_RendersMarkdownInSnippetBlock(t *testing.T) {
 
 func TestRenderCommentSnippet_ReplacesSuggestionWithDiff(t *testing.T) {
 	body := "```suggestion\nnew content\n```"
-	start := 11
-	end := 11
+	anchor := threads.LineAnchor{Start: 11, End: 11, Space: threads.SnippetSpace}
 	snippet := &threads.HistoricalSnippet{
 		Commit:        "abcdef123",
 		Path:          "file.go",
@@ -105,7 +104,7 @@ func TestRenderCommentSnippet_ReplacesSuggestionWithDiff(t *testing.T) {
 		},
 	}
 
-	lines := renderCommentSnippet(body, false, 80, snippet, &start, &end, false)
+	lines := renderCommentSnippet(body, false, 80, snippet, anchor, false)
 	expected := []string{
 		"- old content",
 		"+ new content",
@@ -117,9 +116,8 @@ func TestRenderCommentSnippet_ReplacesSuggestionWithDiff(t *testing.T) {
 
 func TestReplaceSuggestionBlocks_FallsBackWithoutSnippet(t *testing.T) {
 	body := "Please change\n```suggestion\nnew content\n```"
-	start := 5
-	end := 5
-	result := replaceSuggestionBlocks(body, nil, &start, &end, false, true)
+	anchor := threads.LineAnchor{Start: 5, End: 5, Space: threads.SnippetSpace}
+	result := replaceSuggestionBlocks(body, nil, anchor, false, true)
 	if !strings.Contains(result, "```suggestion") {
 		t.Fatalf("expected suggestion block to remain when snippet missing; got %q", result)
 	}
@@ -230,7 +228,7 @@ func TestCompactSnippetLines_StripsAnsiOnlyPadding(t *testing.T) {
 
 func TestCompactSnippetLines_PreservesBlankInsideFencedCode(t *testing.T) {
 	body := "```go\nfunc a() {\n\n\tb()\n}\n```"
-	rendered := renderCommentSnippet(body, false, 60, nil, nil, nil, false)
+	rendered := renderCommentSnippet(body, false, 60, nil, threads.LineAnchor{}, false)
 	got := compactSnippetLines(rendered)
 
 	blanks := 0
@@ -295,79 +293,15 @@ func TestPrintSummary_RendersBodyWhenHighlightLineZero(t *testing.T) {
 
 func TestPrintCommentBlock_ReportsWhetherItPrinted(t *testing.T) {
 	var buf bytes.Buffer
-	if printCommentBlock(&buf, "   ", 100, false, false, nil, nil, nil) {
+	if printCommentBlock(&buf, "   ", 100, false, false, nil, threads.LineAnchor{}) {
 		t.Fatal("expected an all-blank body to report nothing printed")
 	}
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output for an all-blank body, got %q", buf.String())
 	}
-	if !printCommentBlock(&buf, "real text", 100, false, false, nil, nil, nil) {
+	if !printCommentBlock(&buf, "real text", 100, false, false, nil, threads.LineAnchor{}) {
 		t.Fatal("expected a real body to report it printed")
 	}
-}
-
-func TestCommentLineRange(t *testing.T) {
-	cases := []struct {
-		name       string
-		comment    threads.ThreadComment
-		start, end *int
-	}{
-		{
-			name: "prefers the original pair over the current one",
-			comment: threads.ThreadComment{
-				Line: ptr(118), StartLine: ptr(116),
-				OriginalLine: ptr(120), OriginalStartLine: ptr(115),
-			},
-			start: ptr(115), end: ptr(120),
-		},
-		{
-			name: "outdated comment with no current lines",
-			comment: threads.ThreadComment{
-				OriginalLine: ptr(120), OriginalStartLine: ptr(115),
-			},
-			start: ptr(115), end: ptr(120),
-		},
-		{
-			name:    "falls back to the current pair without an original line",
-			comment: threads.ThreadComment{Line: ptr(40), StartLine: ptr(38)},
-			start:   ptr(38), end: ptr(40),
-		},
-		{
-			name:    "single line comment",
-			comment: threads.ThreadComment{OriginalLine: ptr(12)},
-			start:   ptr(12), end: ptr(12),
-		},
-		{
-			name: "derives the start from the span for a cached comment",
-			comment: threads.ThreadComment{
-				Line: ptr(118), StartLine: ptr(116),
-				OriginalLine: ptr(120),
-			},
-			start: ptr(118), end: ptr(120),
-		},
-		{
-			name:    "no line information at all",
-			comment: threads.ThreadComment{},
-			start:   nil, end: nil,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotStart, gotEnd := commentLineRange(tc.comment)
-			if !reflect.DeepEqual(gotStart, tc.start) || !reflect.DeepEqual(gotEnd, tc.end) {
-				t.Fatalf("got (%v, %v), want (%v, %v)",
-					derefOrNil(gotStart), derefOrNil(gotEnd), derefOrNil(tc.start), derefOrNil(tc.end))
-			}
-		})
-	}
-}
-
-func derefOrNil(v *int) any {
-	if v == nil {
-		return nil
-	}
-	return *v
 }
 
 // TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange proves the
@@ -384,8 +318,7 @@ func TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange(t *testing.T)
 		Lines: []string{"first", "second", "third", "fourth"}, // lines 10..13
 	}
 
-	start, end := commentLineRange(comment)
-	lines := renderCommentSnippet(body, false, 80, snippet, start, end, false)
+	lines := renderCommentSnippet(body, false, 80, snippet, comment.Anchor(threads.SnippetSpace), false)
 
 	expected := []string{"- second", "- third", "+ replacement"}
 	if !reflect.DeepEqual(lines, expected) {
@@ -407,7 +340,7 @@ func boxRowWidths(out string) []int {
 
 func TestPrintCommentBlock_BorderAlignsWithWideRunes(t *testing.T) {
 	var buf bytes.Buffer
-	printCommentBlock(&buf, "plain line\n\n🤖 emoji line and 日本語 text\n\nlast", 100, false, false, nil, nil, nil)
+	printCommentBlock(&buf, "plain line\n\n🤖 emoji line and 日本語 text\n\nlast", 100, false, false, nil, threads.LineAnchor{})
 
 	widths := boxRowWidths(buf.String())
 	if len(widths) < 3 {
@@ -423,7 +356,7 @@ func TestPrintCommentBlock_BorderAlignsWithWideRunes(t *testing.T) {
 func TestPrintCommentBlock_BorderAlignsAtNarrowWidth(t *testing.T) {
 	for _, width := range []int{40, 52, 60, 92, 200} {
 		var buf bytes.Buffer
-		printCommentBlock(&buf, "A reasonably long comment body that will need to be wrapped by the renderer at some point.", width, false, true, nil, nil, nil)
+		printCommentBlock(&buf, "A reasonably long comment body that will need to be wrapped by the renderer at some point.", width, false, true, nil, threads.LineAnchor{})
 
 		widths := boxRowWidths(buf.String())
 		for i, w := range widths {

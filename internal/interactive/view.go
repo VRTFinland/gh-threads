@@ -193,25 +193,15 @@ func renderThreadListEntry(thread threads.ReviewThread, isLastInPath bool, selec
 	return rendered
 }
 
-// formatThreadLines renders the thread's anchor. Start and end must come from
-// the same coordinate space: pairing StartLine, a position in the current diff,
-// with OriginalLine printed a range spanning two different revisions of the
-// file whenever the thread was outdated.
+// formatThreadLines renders the thread's position in the list, preferring the
+// current diff: that is where the reader is looking, and an outdated thread
+// falls back to the commit it was written against.
 func formatThreadLines(thread threads.ReviewThread) string {
-	if thread.Line != nil {
-		return formatLineRange(thread.StartLine, *thread.Line)
+	anchor := thread.Anchor(threads.CurrentSpace)
+	if !anchor.Valid() {
+		return "?"
 	}
-	if thread.OriginalLine != nil {
-		return formatLineRange(thread.OriginalStartLine, *thread.OriginalLine)
-	}
-	return "?"
-}
-
-func formatLineRange(start *int, end int) string {
-	if start != nil && *start != end {
-		return fmt.Sprintf("%d-%d", *start, end)
-	}
-	return fmt.Sprintf("%d", end)
+	return anchor.String()
 }
 
 func firstCommentAuthor(thread threads.ReviewThread) string {
