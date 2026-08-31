@@ -234,3 +234,32 @@ func TestUpdateFilterEmptyAuthorClearsFilterWithManyAuthors(t *testing.T) {
 		t.Fatalf("expected the author filter to be cleared, got %q", tm.state.filters.Author)
 	}
 }
+
+func TestInitialModelAppliesConfig(t *testing.T) {
+	list := []threads.ReviewThread{
+		{ThreadID: "t1", Path: "a.go", IsResolved: true, Comments: []threads.ThreadComment{{ID: "c1", Author: "alice", Body: "one"}}},
+		{ThreadID: "t2", Path: "a.go", Comments: []threads.ThreadComment{{ID: "c2", Author: "bob", Body: "two"}}},
+	}
+
+	m := initialModel(ProgramConfig{
+		Threads:  list,
+		Filters:  Filters{Status: threads.StatusUnresolved, Author: "bob"},
+		ShowDiff: true,
+	})
+
+	visible := m.FilteredThreads()
+	if len(visible) != 1 || visible[0].ThreadID != "t2" {
+		t.Fatalf("expected the command line's filters to be in force, got %d threads", len(visible))
+	}
+	if m.detailMode != detailDiff {
+		t.Fatal("expected --show-diff to open the diff view")
+	}
+
+	plain := initialModel(ProgramConfig{Threads: list})
+	if len(plain.FilteredThreads()) != 2 {
+		t.Fatal("expected an unset status filter to show every thread")
+	}
+	if plain.detailMode != detailSnippet {
+		t.Fatal("expected the snippet view by default")
+	}
+}

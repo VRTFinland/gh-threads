@@ -34,11 +34,14 @@ type ProgramConfig struct {
 	Ctx          context.Context
 	Info         threads.PullRequestInfo
 	Context      threads.Context
+	// Filters and ShowDiff carry the command line's opening state into the
+	// TUI, which owns both from then on.
+	Filters  Filters
+	ShowDiff bool
 }
 
 func Run(cfg ProgramConfig) error {
-	model := NewModel(cfg.Conversation, cfg.Threads, cfg.Info, cfg.Context, cfg.Service)
-	p := tea.NewProgram(newTeaModel(model, cfg), tea.WithAltScreen())
+	p := tea.NewProgram(newTeaModel(initialModel(cfg), cfg), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
@@ -99,6 +102,20 @@ func newTeaModel(m Model, cfg ProgramConfig) *teaModel {
 		viewportHeight:        defaultHeight,
 		viewportWidth:         80,
 	}
+}
+
+// initialModel opens the TUI on the view the command line asked for.
+func initialModel(cfg ProgramConfig) Model {
+	m := NewModel(cfg.Conversation, cfg.Threads, cfg.Info, cfg.Context, cfg.Service)
+	m.filters = cfg.Filters
+	if m.filters.Status == "" {
+		m.filters.Status = threads.StatusAll
+	}
+	if cfg.ShowDiff {
+		m.detailMode = detailDiff
+	}
+	m.applyFilters()
+	return m
 }
 
 func (m *teaModel) Init() tea.Cmd { return nil }

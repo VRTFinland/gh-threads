@@ -68,6 +68,14 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	setFlags := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	if *interactiveFlag {
+		if err := interactiveFlagConflict(setFlags); err != nil {
+			return err
+		}
+	}
+
 	repoSlug := strings.TrimSpace(*repoFlag)
 	if repoSlug == "" {
 		var err error
@@ -153,6 +161,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	authorFilter := strings.TrimSpace(*authorFlag)
+	textFilter := strings.TrimSpace(*textFlag)
+
 	if *interactiveFlag {
 		cfg := interactive.ProgramConfig{
 			Conversation: conversationComments,
@@ -161,6 +172,15 @@ func (a *App) Run(ctx context.Context, args []string) error {
 			Info:         prInfo,
 			Context:      ghContext,
 			Ctx:          ctx,
+			// The TUI has its own filters and diff toggle, so the command
+			// line's choices become its opening state rather than being
+			// dropped on the floor.
+			Filters: interactive.Filters{
+				Author: authorFilter,
+				Status: status,
+				Text:   textFilter,
+			},
+			ShowDiff: showDiff,
 			Refresh: func(force bool) (threads.PullRequestInfo, []threads.ConversationComment, []threads.ReviewThread, error) {
 				return fetchForInteractive(ctx, service, ghContext, force)
 			},
@@ -170,8 +190,6 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return interactive.Run(cfg)
 	}
 
-	authorFilter := strings.TrimSpace(*authorFlag)
-	textFilter := strings.TrimSpace(*textFlag)
 	conversationComments = threads.FilterConversationComments(conversationComments, authorFilter, textFilter)
 	reviewThreads = threads.FilterReviewThreads(reviewThreads, authorFilter, status, textFilter)
 
@@ -312,6 +330,32 @@ const (
 	outputJSON    outputFormat = "json"
 	outputSummary outputFormat = "summary"
 )
+
+// interactiveFlagConflict rejects the flags the TUI cannot act on. It renders
+// its own colours and markdown and picks its own output, so accepting these and
+// then ignoring them handed back a screen that quietly disregarded half the
+// command line. The filters and the diff toggle are not here: the TUI opens on
+// them instead.
+func interactiveFlagConflict(set map[string]bool) error {
+	var offenders []string
+	for _, name := range []string{"format", "no-colour", "no-color", "no-markdown"} {
+		if set[name] {
+			offenders = append(offenders, "--"+name)
+		}
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s cannot be applied in interactive mode; drop %s or --interactive",
+		strings.Join(offenders, ", "), plural(len(offenders), "it", "them"))
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
 
 // diffOption resolves the two diff flags against each other. They contradict
 // each other, and --hide-diff used to win in silence, so a command that passed

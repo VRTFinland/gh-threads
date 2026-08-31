@@ -111,3 +111,26 @@ func TestDiffOptionRejectsContradictoryFlags(t *testing.T) {
 		}
 	}
 }
+
+// The TUI cannot act on these, and parsing them without saying so handed back
+// a screen that ignored half the command line.
+func TestInteractiveFlagConflict(t *testing.T) {
+	for _, name := range []string{"format", "no-colour", "no-color", "no-markdown"} {
+		err := interactiveFlagConflict(map[string]bool{name: true})
+		if err == nil {
+			t.Fatalf("expected --%s to be rejected in interactive mode", name)
+		}
+		if !strings.Contains(err.Error(), "--"+name) {
+			t.Fatalf("expected the error to name --%s, got %q", name, err)
+		}
+	}
+
+	if err := interactiveFlagConflict(map[string]bool{"status": true, "author": true, "text": true, "show-diff": true}); err != nil {
+		t.Fatalf("filters and diff flags are honoured in interactive mode, got %v", err)
+	}
+
+	err := interactiveFlagConflict(map[string]bool{"format": true, "no-markdown": true})
+	if err == nil || !strings.Contains(err.Error(), "--format") || !strings.Contains(err.Error(), "--no-markdown") {
+		t.Fatalf("expected every offender to be named, got %v", err)
+	}
+}
