@@ -364,11 +364,6 @@ func renderReplyPane(content string, width int) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
-func renderDetailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
-	content, _ := buildDetailContent(state, maxHeight, currentState, replyInput, width)
-	return content
-}
-
 // detailAnchor marks the line range of the detail block that must stay on
 // screen: the selected comment, extended to cover the reply editor while
 // replying.

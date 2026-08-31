@@ -31,7 +31,7 @@ func TestRenderDetailCollapsedKeepsFirstCommentVisible(t *testing.T) {
 		selectedThread:  0,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 5, StateView, textarea.New(), 80)
+	out := detailContent(model, 5, StateView, textarea.New(), 80)
 	if !strings.Contains(out, "first") {
 		t.Fatalf("expected the first comment to be shown: %s", out)
 	}
@@ -55,7 +55,7 @@ func TestRenderDetailCollapsedShowsSelectedComment(t *testing.T) {
 		detailExpanded:  false,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 5, StateView, textarea.New(), 80))
+	out := stripANSI(detailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "third") {
 		t.Fatalf("expected the selected comment to be shown, got %s", out)
 	}
@@ -90,7 +90,7 @@ func TestRenderDetailExpandedRespectsHeightWindow(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 6, StateView, textarea.New(), 80)
+	out := detailContent(model, 6, StateView, textarea.New(), 80)
 	shown := strings.Count(out, "body-")
 	if shown > 2 {
 		t.Fatalf("expected at most 2 comments in viewport, got %d", shown)
@@ -116,7 +116,7 @@ func TestRenderDetailKeepsSelectionInBounds(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := renderDetailContent(model, 8, StateView, textarea.New(), 80)
+	out := detailContent(model, 8, StateView, textarea.New(), 80)
 	if !strings.Contains(out, "third") {
 		t.Fatalf("expected selected final comment to be rendered, got %s", out)
 	}
@@ -139,7 +139,7 @@ func TestRenderDetailHighlightsSelectionMarker(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 10, StateView, textarea.New(), 80))
+	out := stripANSI(detailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, " > bob at") {
 		t.Fatalf("expected selection marker before selected comment, got %q", out)
 	}
@@ -173,7 +173,7 @@ func TestRenderDetailShowsSnippetOnlyForFirstComment(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 20, StateView, textarea.New(), 80))
+	out := stripANSI(detailContent(model, 20, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "first snippet line") {
 		t.Fatalf("expected first snippet to be rendered: %s", out)
 	}
@@ -203,7 +203,7 @@ func TestRenderDetailShowsSnippetEvenInDiffMode(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailDiff,
 	}
-	out := stripANSI(renderDetailContent(model, 10, StateView, textarea.New(), 80))
+	out := stripANSI(detailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "snippet body") {
 		t.Fatalf("expected snippet to remain visible in diff mode, got %s", out)
 	}
@@ -478,7 +478,7 @@ func TestDisplayAuthorReplacesAINameInDetail(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(renderDetailContent(model, 5, StateView, textarea.New(), 80))
+	out := stripANSI(detailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "🤖 co-pilot at") {
 		t.Fatalf("expected AI author label, got %q", out)
 	}
@@ -743,9 +743,9 @@ func TestRenderDetailCollapsedNeverShowsMoreThanExpanded(t *testing.T) {
 	model := detailModel(8)
 	for height := 1; height <= 60; height++ {
 		model.detailExpanded = true
-		expanded := strings.Count(stripANSI(renderDetailContent(model, height, StateView, textarea.New(), 80)), "body-")
+		expanded := strings.Count(stripANSI(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
 		model.detailExpanded = false
-		collapsed := strings.Count(stripANSI(renderDetailContent(model, height, StateView, textarea.New(), 80)), "body-")
+		collapsed := strings.Count(stripANSI(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
 
 		if collapsed > expanded {
 			t.Fatalf("height=%d: collapsed showed %d comments, expanded only %d", height, collapsed, expanded)
@@ -924,4 +924,11 @@ func TestPadOrTrimHandlesWideRunes(t *testing.T) {
 	if w := lipgloss.Width(got); w != 12 {
 		t.Fatalf("expected 12 visible columns, got %d (%q)", w, got)
 	}
+}
+
+// detailContent drops buildDetailContent's anchor, which most rendering tests
+// do not care about.
+func detailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
+	content, _ := buildDetailContent(state, maxHeight, currentState, replyInput, width)
+	return content
 }
