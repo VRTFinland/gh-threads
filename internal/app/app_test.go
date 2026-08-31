@@ -86,3 +86,28 @@ func TestParseArgsRejectsUnknownFlag(t *testing.T) {
 		t.Fatal("expected an unknown flag to be rejected, not swallowed")
 	}
 }
+
+// --hide-diff used to quietly override --show-diff, so a command asking for
+// both got the opposite of one of its own flags with nothing said.
+func TestDiffOptionRejectsContradictoryFlags(t *testing.T) {
+	if _, err := diffOption(true, true); err == nil {
+		t.Fatal("expected --show-diff with --hide-diff to be rejected")
+	}
+
+	cases := []struct {
+		show, hide, want bool
+	}{
+		{show: true, hide: false, want: true},
+		{show: false, hide: true, want: false},
+		{show: false, hide: false, want: false},
+	}
+	for _, tc := range cases {
+		got, err := diffOption(tc.show, tc.hide)
+		if err != nil {
+			t.Fatalf("show=%v hide=%v: unexpected error %v", tc.show, tc.hide, err)
+		}
+		if got != tc.want {
+			t.Fatalf("show=%v hide=%v: got %v, want %v", tc.show, tc.hide, got, tc.want)
+		}
+	}
+}

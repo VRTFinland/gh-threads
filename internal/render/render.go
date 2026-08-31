@@ -534,15 +534,14 @@ func (c colouriser) apply(text string, enabled bool) string {
 }
 
 var (
-	bold      = colouriser{code: "1"}
-	cyan      = colouriser{code: "36"}
-	magenta   = colouriser{code: "35"}
-	yellow    = colouriser{code: "33"}
-	blue      = colouriser{code: "34"}
-	green     = colouriser{code: "32"}
-	red       = colouriser{code: "31"}
-	grey      = colouriser{code: "90"}
-	darkGreen = colouriser{code: "32"}
+	bold    = colouriser{code: "1"}
+	cyan    = colouriser{code: "36"}
+	magenta = colouriser{code: "35"}
+	yellow  = colouriser{code: "33"}
+	blue    = colouriser{code: "34"}
+	green   = colouriser{code: "32"}
+	red     = colouriser{code: "31"}
+	grey    = colouriser{code: "90"}
 )
 
 // printCommentBlock reports whether it printed anything, so the caller can fall
@@ -562,15 +561,15 @@ func printCommentBlock(w io.Writer, body string, width int, colour bool, markdow
 	bottom := "└" + strings.Repeat("─", innerWidth+2) + "┘"
 	borderColour := func(text string) string {
 		if colour {
-			return darkGreen.apply(text, true)
+			return green.apply(text, true)
 		}
 		return text
 	}
 	left := "│"
 	right := "│"
 	if colour {
-		left = darkGreen.apply(left, true)
-		right = darkGreen.apply(right, true)
+		left = green.apply(left, true)
+		right = green.apply(right, true)
 	}
 
 	fmt.Fprintf(w, "            %s\n", borderColour(border))

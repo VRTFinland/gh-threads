@@ -110,9 +110,9 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return err
 	}
 
-	showDiff := *showDiffFlag
-	if *hideDiffFlag {
-		showDiff = false
+	showDiff, err := diffOption(*showDiffFlag, *hideDiffFlag)
+	if err != nil {
+		return err
 	}
 
 	noColour := *noColourFlag || *noColorFlag
@@ -312,6 +312,16 @@ const (
 	outputJSON    outputFormat = "json"
 	outputSummary outputFormat = "summary"
 )
+
+// diffOption resolves the two diff flags against each other. They contradict
+// each other, and --hide-diff used to win in silence, so a command that passed
+// both got the opposite of one of its own flags without a word.
+func diffOption(showDiff, hideDiff bool) (bool, error) {
+	if showDiff && hideDiff {
+		return false, errors.New("--show-diff and --hide-diff contradict each other; pass at most one")
+	}
+	return showDiff, nil
+}
 
 func parseOutputFormat(value string) (outputFormat, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
