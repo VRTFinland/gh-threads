@@ -66,7 +66,19 @@ var aiAuthorAliases = map[string][]string{
 	"gemini":   {"gemini", "google gemini"},
 }
 
-func RenderView(state Model, width int, height int, listHeight int, detailHeight int, statusIndex int, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
+// viewInputs carries the widgets and cursors that live on the tea model rather
+// than in Model. Grouping them keeps the render signatures short and, unlike a
+// positional list of bools and ints, makes a call site self-describing.
+type viewInputs struct {
+	reply                 textarea.Model
+	filter                textinput.Model
+	purpose               string
+	statusIndex           int
+	authorSuggestionIndex int
+	statusSuggestionIndex int
+}
+
+func RenderView(state Model, width, height, listHeight, detailHeight int, in viewInputs) string {
 	if height <= 0 {
 		height = 60
 	}
@@ -83,7 +95,7 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	b.WriteString("\n")
 	b.WriteString(renderDivider(width))
 	b.WriteString("\n")
-	detail := renderDetailBlock(state, detailHeight, width, replyInput, filterInput, inputPurpose, statusIndex, authorSuggestionIndex, statusSuggestionIndex)
+	detail := renderDetailBlock(state, width, detailHeight, in)
 	b.WriteString(detail)
 	b.WriteString("\n")
 	b.WriteString(renderBottomBar(state, width))
@@ -291,28 +303,28 @@ func padListLine(text string, width int) string {
 	return padOrTrim(" "+text, width)
 }
 
-func renderDetailBlock(state Model, height int, width int, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, statusIndex int, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func renderDetailBlock(state Model, width, height int, in viewInputs) string {
 	if state.state == StateHelp {
 		return centerBlock(renderHelp(width), width, height)
 	}
-	detail, anchor := buildDetailContent(state, height, replyInput, width)
+	detail, anchor := buildDetailContent(state, width, height, in.reply)
 
 	extras := make([]string, 0, 3)
 	if state.state == StateFilter {
-		extras = append(extras, filterInput.View())
+		extras = append(extras, in.filter.View())
 	}
-	if state.state == StateFilter && inputPurpose == "author" {
-		if suggestions := state.AuthorSuggestions(filterInput.Value(), authorSuggestionLimit); len(suggestions) > 0 {
-			extras = append(extras, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
+	if state.state == StateFilter && in.purpose == "author" {
+		if suggestions := state.AuthorSuggestions(in.filter.Value(), authorSuggestionLimit); len(suggestions) > 0 {
+			extras = append(extras, renderAuthorSuggestions(suggestions, in.authorSuggestionIndex))
 		}
 	}
-	if state.state == StateFilter && inputPurpose == "status" {
-		if suggestions := statusSuggestions(filterInput.Value()); len(suggestions) > 0 {
-			extras = append(extras, renderStatusSuggestions(suggestions, statusSuggestionIndex))
+	if state.state == StateFilter && in.purpose == "status" {
+		if suggestions := statusSuggestions(in.filter.Value()); len(suggestions) > 0 {
+			extras = append(extras, renderStatusSuggestions(suggestions, in.statusSuggestionIndex))
 		}
 	}
 	if state.state == StateStatus {
-		extras = append(extras, renderStatusPicker(statusIndex))
+		extras = append(extras, renderStatusPicker(in.statusIndex))
 	}
 	extrasBlock := strings.Join(filterEmptySections(extras), "\n\n")
 
@@ -372,7 +384,7 @@ type detailAnchor struct {
 	end   int
 }
 
-func buildDetailContent(state Model, maxHeight int, replyInput textarea.Model, width int) (string, detailAnchor) {
+func buildDetailContent(state Model, width, maxHeight int, replyInput textarea.Model) (string, detailAnchor) {
 	anchor := detailAnchor{start: -1, end: -1}
 	thread, ok := state.SelectedThread()
 	if !ok {

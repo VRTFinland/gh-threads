@@ -455,7 +455,18 @@ func (m *teaModel) View() string {
 		m.replyInput.SetWidth(width - 2)
 		m.adjustReplyHeight()
 	}
-	return RenderView(m.state, width, height, listHeight, detailHeight, m.statusIndex, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
+	return RenderView(m.state, width, height, listHeight, detailHeight, m.inputs())
+}
+
+func (m *teaModel) inputs() viewInputs {
+	return viewInputs{
+		reply:                 m.replyInput,
+		filter:                m.filterInput,
+		purpose:               m.inputPurpose,
+		statusIndex:           m.statusIndex,
+		authorSuggestionIndex: m.authorSuggestionIndex,
+		statusSuggestionIndex: m.statusSuggestionIndex,
+	}
 }
 
 func (m *teaModel) adjustReplyHeight() {

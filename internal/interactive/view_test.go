@@ -598,7 +598,7 @@ func TestRenderDetailBlockKeepsReplyEditorVisible(t *testing.T) {
 	reply.SetValue("my draft reply")
 
 	model.state = StateReply
-	out := ansi.Strip(renderDetailBlock(model, 20, 80, reply, textinput.New(), "reply", 0, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 80, 20, viewInputs{reply: reply, purpose: "reply", authorSuggestionIndex: -1, statusSuggestionIndex: -1}))
 
 	if !strings.Contains(out, "Replying to") {
 		t.Fatalf("expected reply target header to stay on screen, got:\n%s", out)
@@ -631,7 +631,7 @@ func TestRenderDetailBlockKeepsSelectionVisibleWhenScrolled(t *testing.T) {
 	}
 
 	model.state = StateView
-	out := ansi.Strip(renderDetailBlock(model, 20, 80, textarea.New(), textinput.New(), "", 0, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 80, 20, viewInputs{authorSuggestionIndex: -1, statusSuggestionIndex: -1}))
 
 	if !strings.Contains(out, "> bob at") {
 		t.Fatalf("expected selected comment header to stay on screen, got:\n%s", out)
@@ -873,7 +873,7 @@ func TestRenderDetailBlockKeepsFilterPromptVisibleInShortPane(t *testing.T) {
 	filter.Focus()
 
 	model.state = StateFilter
-	out := ansi.Strip(renderDetailBlock(model, 8, 80, textarea.New(), filter, "author", 0, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 80, 8, viewInputs{filter: filter, purpose: "author", authorSuggestionIndex: -1, statusSuggestionIndex: -1}))
 
 	if got := len(strings.Split(out, "\n")); got != 8 {
 		t.Fatalf("expected exactly 8 lines, got %d", got)
@@ -914,7 +914,7 @@ func TestPadOrTrimHandlesWideRunes(t *testing.T) {
 // do not care about.
 func detailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
 	state.state = currentState
-	content, _ := buildDetailContent(state, maxHeight, replyInput, width)
+	content, _ := buildDetailContent(state, width, maxHeight, replyInput)
 	return content
 }
 
