@@ -10,8 +10,8 @@ Jo korjattu: `9d8fb58` (kuollut koodi), `63c9174` (reply-editori + kursori),
 **vaihe 3** (`817258a`, `bc9d1ed`, `9b50376`, `f9ac931`),
 **vaihe 4** (`1f2f944`, `7a3a1fc`).
 
-**Kaikki yhdeksän löydöstä on korjattu.** Jäljellä vain alla oleva
-`formatThreadLines`-jatkotyö.
+**Kaikki yhdeksän löydöstä on korjattu**, samoin analyysin matkan varrella
+löytämät lisäviat. Avoimia kohtia ei ole.
 
 ## Yhteenveto
 
@@ -517,9 +517,5 @@ Projektissa ei ole linteriä eikä tyyppitarkistinta Go-työkaluketjun lisäksi.
    `io.Discard`illa (`Service.SetLogWriter`). Statusrivi jää parannukseksi.
 1. ~~**Vaihe 4:** `cacheVersion`~~ — nostettu 2:een, ja `anchorSpan`-fallback
    jätettiin paikalleen.
-2. **AVOIN — ainoa jäljellä oleva työ.** `formatThreadLines` (`view.go:169`)
-   vertaa yhä `thread.StartLine`ä (nykyinen avaruus) `thread.OriginalLine`en
-   (alkuperäinen) ja voi tulostaa väärän rivivälin listassa. Vain näyttövirhe.
-   Korjaus vaatii `originalStartLine`in myös **thread-tasolle**:
-   `service.go:75`, `ghThread`, `types.go` (`ReviewThread`) ja `filter.go`:n
-   kopio. Jätettiin erilliseksi, jotta vaihe 4 pysyi viiden tiedoston rajassa.
+2. ~~`formatThreadLines`in thread-tason korjaus~~ — tehty: `originalStartLine`
+   haetaan nyt myös thread-tasolta ja riviväli muodostetaan parina.

@@ -75,6 +75,7 @@ query(
           line
           originalLine
           startLine
+          originalStartLine
           comments(first: 100) {
             nodes {
               id
@@ -213,14 +214,15 @@ type ghComment struct {
 }
 
 type ghThread struct {
-	ID           string `json:"id"`
-	Path         string `json:"path"`
-	Line         *int   `json:"line"`
-	OriginalLine *int   `json:"originalLine"`
-	StartLine    *int   `json:"startLine"`
-	IsResolved   bool   `json:"isResolved"`
-	IsOutdated   bool   `json:"isOutdated"`
-	Comments     struct {
+	ID                string `json:"id"`
+	Path              string `json:"path"`
+	Line              *int   `json:"line"`
+	OriginalLine      *int   `json:"originalLine"`
+	StartLine         *int   `json:"startLine"`
+	OriginalStartLine *int   `json:"originalStartLine"`
+	IsResolved        bool   `json:"isResolved"`
+	IsOutdated        bool   `json:"isOutdated"`
+	Comments          struct {
 		Nodes    []ghComment `json:"nodes"`
 		PageInfo pageInfo    `json:"pageInfo"`
 	} `json:"comments"`
@@ -435,14 +437,15 @@ func (s *Service) FetchReviewThreads(ctx context.Context, ghCtx Context, include
 				comments = append(comments, extra...)
 			}
 			threads = append(threads, ReviewThread{
-				ThreadID:     node.ID,
-				Path:         node.Path,
-				Line:         node.Line,
-				OriginalLine: node.OriginalLine,
-				StartLine:    node.StartLine,
-				IsResolved:   node.IsResolved,
-				IsOutdated:   node.IsOutdated,
-				Comments:     comments,
+				ThreadID:          node.ID,
+				Path:              node.Path,
+				Line:              node.Line,
+				OriginalLine:      node.OriginalLine,
+				StartLine:         node.StartLine,
+				OriginalStartLine: node.OriginalStartLine,
+				IsResolved:        node.IsResolved,
+				IsOutdated:        node.IsOutdated,
+				Comments:          comments,
 			})
 		}
 

@@ -822,3 +822,50 @@ func BenchmarkRenderThreadListRichBodies(b *testing.B) {
 		renderThreadList(model, 12, 120)
 	}
 }
+
+func TestFormatThreadLines(t *testing.T) {
+	cases := []struct {
+		name   string
+		thread threads.ReviewThread
+		want   string
+	}{
+		{
+			name:   "current multi-line range",
+			thread: threads.ReviewThread{Line: ptr(120), StartLine: ptr(116)},
+			want:   "116-120",
+		},
+		{
+			name:   "current single line",
+			thread: threads.ReviewThread{Line: ptr(120)},
+			want:   "120",
+		},
+		{
+			name: "outdated thread uses the original pair",
+			thread: threads.ReviewThread{
+				StartLine:    ptr(116), // stale, belongs to the current diff
+				OriginalLine: ptr(120), OriginalStartLine: ptr(115),
+			},
+			want: "115-120",
+		},
+		{
+			name:   "outdated single line",
+			thread: threads.ReviewThread{OriginalLine: ptr(12)},
+			want:   "12",
+		},
+		{
+			name:   "no line information",
+			thread: threads.ReviewThread{},
+			want:   "?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatThreadLines(tc.thread); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func ptr(v int) *int { return &v }

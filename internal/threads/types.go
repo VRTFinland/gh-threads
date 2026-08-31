@@ -36,17 +36,18 @@ type ThreadComment struct {
 }
 
 type ReviewThread struct {
-	ThreadID     string          `json:"thread_id"`
-	Path         string          `json:"path"`
-	Line         *int            `json:"line"`
-	OriginalLine *int            `json:"original_line"`
-	StartLine    *int            `json:"start_line"`
-	IsResolved   bool            `json:"is_resolved"`
-	IsOutdated   bool            `json:"is_outdated"`
-	Comments     []ThreadComment `json:"comments"`
-	repoOwner    string
-	repoName     string
-	pullRequest  int
+	ThreadID          string          `json:"thread_id"`
+	Path              string          `json:"path"`
+	Line              *int            `json:"line"`
+	OriginalLine      *int            `json:"original_line"`
+	StartLine         *int            `json:"start_line"`
+	OriginalStartLine *int            `json:"original_start_line"`
+	IsResolved        bool            `json:"is_resolved"`
+	IsOutdated        bool            `json:"is_outdated"`
+	Comments          []ThreadComment `json:"comments"`
+	repoOwner         string
+	repoName          string
+	pullRequest       int
 }
 
 type Payload struct {
