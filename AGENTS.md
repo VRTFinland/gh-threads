@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`cmd/gh-threads/main.go` bootstraps the CLI and delegates to `internal/app`, which owns flag parsing, repo/PR detection, caching switches, and the summary vs. interactive execution paths. All GitHub I/O runs through `internal/ghcli`, `internal/threads` carries the service layer, cache, and payload builders, and `internal/render` formats JSON and Glamour-powered summaries. The interactive TUI lives in `internal/interactive` (Bubble Tea, Lip Gloss, Glamour) with view logic split between `model.go` and `view.go`. Helpers that touch the local checkout (`internal/gitlocal`) or fetch remote file contents (`internal/gitremote`) are reusable utilities—keep new packages under `internal/` unless they are meant to be public.
+`cmd/gh-threads/main.go` bootstraps the CLI and delegates to `internal/app`, which owns flag parsing, repo/PR detection, caching switches, and the summary vs. interactive execution paths. All GitHub I/O runs through `internal/ghcli`, `internal/threads` carries the service layer, cache, and payload builders, and `internal/render` formats JSON and Glamour-powered summaries. The interactive TUI lives in `internal/interactive` (Bubble Tea, Lip Gloss, Glamour) with view logic split between `model.go` and `view.go`. Helpers that touch the local checkout (`internal/gitlocal`), cut snippets out of remote files (`internal/gitremote`), or read the diff hunks GitHub attaches to comments (`internal/diff`) are reusable utilities—keep new packages under `internal/` unless they are meant to be public.
 
 ## Build, Test, and Development Commands
 - `go run ./cmd/gh-threads --repo owner/name 13533 --format summary --show-diff` — quickest way to exercise the CLI; swap flags to inspect JSON, colour, markdown, or cache invalidation behaviours.
@@ -20,7 +20,7 @@ Use the existing Go test layout under `internal/`: e.g., extend `internal/thread
 - Terminal text: measure with `lipgloss.Width`, truncate with `x/ansi`'s `Truncate`/`Strip`. `utf8.RuneCountInString` and rune slicing miscount ANSI escapes and double-width runes, and can cut mid-escape.
 - Line anchors: GitHub returns `line`/`startLine` (current diff) and `originalLine`/`originalStartLine` (original commit). Never mix a field from one pair with a field from the other. Do not read the four fields directly: call `ThreadComment.Anchor`/`ReviewThread.Anchor` in `internal/threads/anchor.go`, which returns a `LineAnchor` carrying the space it came from. Snippets are cut in `threads.SnippetSpace`, and anything drawn over a snippet must be measured in it.
 - Adding a persisted field to `ThreadComment`/`ReviewThread` means: GraphQL query, the `gh*` struct, the public type, and a `cacheVersion` bump in `internal/threads/cache.go`.
-- `View()` runs on every keystroke: route any new Glamour render through `renderCache` in `internal/interactive/view.go` (an uncached snippet highlight costs ~1.8 ms per frame).
+- `View()` runs on every keystroke: route any new Glamour render, or anything that measures terminal width per row, through a `memoCache` in `internal/interactive/view.go` (an uncached snippet highlight costs ~1.8 ms per frame; uncached previews were a fifth of a frame). `BenchmarkView` measures a whole frame -- use it, do not estimate.
 - Never write to stderr while the TUI holds the alt screen; `internal/app` mutes the service with `SetLogWriter(io.Discard)`.
 - Snippets are decoration: `attachHistoricalSnippets` logs and continues. Never let a snippet fetch abort a command.
 
