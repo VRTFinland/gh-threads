@@ -898,3 +898,30 @@ func TestRenderDetailBlockKeepsFilterPromptVisibleInShortPane(t *testing.T) {
 		t.Fatalf("expected the author suggestions to stay on screen, got:\n%s", out)
 	}
 }
+
+func TestPadOrTrimTruncatesAnsiSafely(t *testing.T) {
+	styled := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(strings.Repeat("abcde ", 20))
+
+	got := padOrTrim(styled, 30)
+
+	if w := lipgloss.Width(got); w != 30 {
+		t.Fatalf("expected exactly 30 visible columns, got %d (%q)", w, got)
+	}
+	// A cut in the middle of an escape sequence leaves a dangling ESC that
+	// bleeds colour into the rest of the screen.
+	if strings.Count(got, "\x1b") > 0 && !strings.HasSuffix(stripANSI(got), "...") {
+		t.Fatalf("expected the truncation marker to survive, got %q", stripANSI(got))
+	}
+	for _, part := range strings.Split(got, "\x1b")[1:] {
+		if !strings.Contains(part, "m") {
+			t.Fatalf("output ends mid escape sequence: %q", got)
+		}
+	}
+}
+
+func TestPadOrTrimHandlesWideRunes(t *testing.T) {
+	got := padOrTrim("日本語のテキストがここにあります", 12)
+	if w := lipgloss.Width(got); w != 12 {
+		t.Fatalf("expected 12 visible columns, got %d (%q)", w, got)
+	}
+}

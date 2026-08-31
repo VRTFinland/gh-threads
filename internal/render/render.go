@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
@@ -625,11 +625,10 @@ var (
 // printCommentBlock reports whether it printed anything, so the caller can fall
 // back to printing the body itself.
 func printCommentBlock(w io.Writer, body string, width int, colour bool, markdown bool, snippet *threads.HistoricalSnippet, startLine, endLine *int) bool {
-	blockWidth := clamp(width-12, 40, 120)
-	innerWidth := blockWidth - 4
-	if innerWidth < 10 {
-		innerWidth = blockWidth
-	}
+	// The inner width and the markdown wrap must agree, or glamour returns lines
+	// wider than the border. renderCommentBody floors its wrap at 40, so the box
+	// floors its inner width at the same place.
+	innerWidth := clamp(width-16, 40, 116)
 
 	lines := compactSnippetLines(renderCommentSnippet(body, markdown, innerWidth, snippet, startLine, endLine, colour))
 	if len(lines) == 0 {
@@ -683,8 +682,10 @@ func wrapCommentSnippetLines(body string, limit int) []string {
 	rawLines := strings.Split(body, "\n")
 	var lines []string
 	for _, raw := range rawLines {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		// Only trailing space is padding. Leading space is content: a suggestion
+		// diff shows the indentation the reviewer actually proposed.
+		raw = strings.TrimRight(raw, " \t")
+		if strings.TrimSpace(raw) == "" {
 			lines = append(lines, "")
 			continue
 		}
@@ -695,7 +696,7 @@ func wrapCommentSnippetLines(body string, limit int) []string {
 }
 
 func wrapPlainLine(line string, limit int) []string {
-	if limit <= 0 || utf8.RuneCountInString(line) <= limit {
+	if limit <= 0 || visibleWidth(line) <= limit {
 		return []string{line}
 	}
 	words := strings.Fields(line)
@@ -706,7 +707,7 @@ func wrapPlainLine(line string, limit int) []string {
 	var builder strings.Builder
 	currentLen := 0
 	for _, word := range words {
-		wordLen := utf8.RuneCountInString(word)
+		wordLen := visibleWidth(word)
 		if currentLen == 0 {
 			builder.WriteString(word)
 			currentLen = wordLen
@@ -731,11 +732,18 @@ func wrapPlainLine(line string, limit int) []string {
 
 var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
 
+// visibleWidth reports how many terminal columns text occupies: ANSI escapes
+// take none, and an emoji or CJK rune takes two. Counting runes instead padded
+// such lines short and left box borders ragged.
+func visibleWidth(text string) int {
+	return lipgloss.Width(text)
+}
+
 func padRight(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-	length := utf8.RuneCountInString(text)
+	length := visibleWidth(text)
 	if length >= width {
 		return text
 	}
@@ -748,7 +756,7 @@ func padRightVisible(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-	visible := utf8.RuneCountInString(ansiEscapeRegexp.ReplaceAllString(text, ""))
+	visible := visibleWidth(text)
 	if visible >= width {
 		return text
 	}

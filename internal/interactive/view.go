@@ -744,17 +744,20 @@ func padOrTrim(text string, width int) string {
 	if current < width {
 		return line + strings.Repeat(" ", width-current)
 	}
-	runes := []rune(line)
+	// Slicing runes here counted ANSI escapes as content and wide runes as one
+	// column: it could cut mid escape sequence, bleeding colour into the rest of
+	// the screen, and left CJK or emoji lines wider than the pane.
+	tail := "..."
 	if width <= 3 {
-		if width > len(runes) {
-			width = len(runes)
-		}
-		return string(runes[:width])
+		tail = ""
 	}
-	if width-3 > len(runes) {
-		return line
+	trimmed := xansi.Truncate(line, width, tail)
+	// A wide rune cannot always land on the limit exactly, so pad the remainder
+	// to keep every pane line the same width.
+	if short := width - lipgloss.Width(trimmed); short > 0 {
+		trimmed += strings.Repeat(" ", short)
 	}
-	return string(runes[:width-3]) + "..."
+	return trimmed
 }
 
 func sanitizeLine(text string) string {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
 
@@ -390,5 +392,68 @@ func TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange(t *testing.T)
 	expected := []string{"- second", "- third", "+ replacement"}
 	if !reflect.DeepEqual(lines, expected) {
 		t.Fatalf("expected the original-space range 11-12 to be removed, got %v", lines)
+	}
+}
+
+// boxRowWidths returns the visible width of every "│ … │" row in the output.
+func boxRowWidths(out string) []int {
+	var widths []int
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "│") && strings.HasSuffix(trimmed, "│") {
+			widths = append(widths, lipgloss.Width(trimmed))
+		}
+	}
+	return widths
+}
+
+func TestPrintCommentBlock_BorderAlignsWithWideRunes(t *testing.T) {
+	var buf bytes.Buffer
+	printCommentBlock(&buf, "plain line\n\n🤖 emoji line and 日本語 text\n\nlast", 100, false, false, nil, nil, nil)
+
+	widths := boxRowWidths(buf.String())
+	if len(widths) < 3 {
+		t.Fatalf("expected several box rows, got %d:\n%s", len(widths), buf.String())
+	}
+	for i, w := range widths {
+		if w != widths[0] {
+			t.Fatalf("row %d is %d columns wide, first row is %d:\n%s", i, w, widths[0], buf.String())
+		}
+	}
+}
+
+func TestPrintCommentBlock_BorderAlignsAtNarrowWidth(t *testing.T) {
+	for _, width := range []int{40, 52, 60, 92, 200} {
+		var buf bytes.Buffer
+		printCommentBlock(&buf, "A reasonably long comment body that will need to be wrapped by the renderer at some point.", width, false, true, nil, nil, nil)
+
+		widths := boxRowWidths(buf.String())
+		for i, w := range widths {
+			if w != widths[0] {
+				t.Fatalf("width=%d row %d is %d columns, first row is %d:\n%s", width, i, w, widths[0], buf.String())
+			}
+		}
+	}
+}
+
+func TestWrapCommentSnippetLines_PreservesIndentation(t *testing.T) {
+	body := "- \tif x {\n+ \t\tif y {"
+	got := wrapCommentSnippetLines(body, 80)
+
+	for _, line := range got {
+		if strings.Contains(line, "if x {") && !strings.Contains(line, "\t") {
+			t.Fatalf("expected the proposed indentation to survive, got %q", got)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected two lines, got %q", got)
+	}
+}
+
+func TestWrapPlainLineMeasuresVisibleWidth(t *testing.T) {
+	coloured := "\x1b[32mone two three four five six\x1b[0m"
+	got := wrapPlainLine(coloured, 40)
+	if len(got) != 1 {
+		t.Fatalf("visible text is 26 columns and fits in 40; ANSI must not count, got %d lines: %q", len(got), got)
 	}
 }
