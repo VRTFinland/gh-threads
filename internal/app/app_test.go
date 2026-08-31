@@ -1,0 +1,88 @@
+package app
+
+import (
+	"flag"
+	"io"
+	"strings"
+	"testing"
+)
+
+func testFlags() (*flag.FlagSet, *string, *string, *bool) {
+	fs := flag.NewFlagSet("gh-threads", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	repo := fs.String("repo", "", "")
+	format := fs.String("format", "summary", "")
+	showDiff := fs.Bool("show-diff", false, "")
+	return fs, repo, format, showDiff
+}
+
+// Flags used to be dropped once a positional argument had been seen, so the
+// form the README documents queried the wrong repository in the default format
+// and said nothing about it.
+func TestParseArgsAcceptsFlagsOnEitherSideOfTheNumber(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "flags first", args: []string{"--repo", "o/r", "--format", "json", "--show-diff", "13533"}},
+		{name: "number first", args: []string{"13533", "--repo", "o/r", "--format", "json", "--show-diff"}},
+		{name: "number in the middle", args: []string{"--repo", "o/r", "13533", "--format", "json", "--show-diff"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, repo, format, showDiff := testFlags()
+
+			positional, err := parseArgs(fs, tc.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(positional) != 1 || positional[0] != "13533" {
+				t.Fatalf("expected the pull request number, got %v", positional)
+			}
+			if *repo != "o/r" {
+				t.Fatalf("expected --repo to survive, got %q", *repo)
+			}
+			if *format != "json" {
+				t.Fatalf("expected --format to survive, got %q", *format)
+			}
+			if !*showDiff {
+				t.Fatal("expected --show-diff to survive")
+			}
+		})
+	}
+}
+
+func TestParseArgsWithoutPositional(t *testing.T) {
+	fs, repo, _, _ := testFlags()
+
+	positional, err := parseArgs(fs, []string{"--repo", "o/r"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(positional) != 0 {
+		t.Fatalf("expected no positional argument, got %v", positional)
+	}
+	if *repo != "o/r" {
+		t.Fatalf("expected --repo to be parsed, got %q", *repo)
+	}
+}
+
+func TestParseArgsRejectsExtraPositionals(t *testing.T) {
+	fs, _, _, _ := testFlags()
+
+	_, err := parseArgs(fs, []string{"13533", "14863"})
+
+	if err == nil || !strings.Contains(err.Error(), "expected one pull request number") {
+		t.Fatalf("expected a clear error for a second number, got %v", err)
+	}
+}
+
+func TestParseArgsRejectsUnknownFlag(t *testing.T) {
+	fs, _, _, _ := testFlags()
+
+	if _, err := parseArgs(fs, []string{"13533", "--nope"}); err == nil {
+		t.Fatal("expected an unknown flag to be rejected, not swallowed")
+	}
+}

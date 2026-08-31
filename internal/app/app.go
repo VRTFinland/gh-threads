@@ -63,7 +63,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	trailing, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -81,7 +82,6 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return err
 	}
 
-	trailing := fs.Args()
 	if len(trailing) == 0 {
 		if !gitlocal.HasGitHubOrigin(ctx) {
 			fs.Usage()
@@ -197,6 +197,30 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 
 	return nil
+}
+
+// parseArgs parses flags that appear before, after, or around the positional
+// arguments. flag.FlagSet stops at the first non-flag argument, so anything
+// written after the pull request number used to be dropped without a word --
+// including --repo, which silently fell back to the current directory's
+// repository, and --format, which silently reverted to the default.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+	if len(positional) > 1 {
+		return nil, fmt.Errorf("expected one pull request number, got %d: %s", len(positional), strings.Join(positional, " "))
+	}
+	return positional, nil
 }
 
 // fetchForInteractive runs the thread fetch and the pull-request metadata fetch
