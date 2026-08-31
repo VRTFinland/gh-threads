@@ -507,16 +507,3 @@ func refreshCmd(cfg ProgramConfig) tea.Cmd {
 		return refreshFinished{info: info, conversation: convo, threads: threads, err: err}
 	}
 }
-
-func listLineEstimate(threads []threads.ReviewThread) int {
-	if len(threads) == 0 {
-		return 1
-	}
-	lines := len(threads) + 1 // first path header
-	for i := 1; i < len(threads); i++ {
-		if threads[i].Path != threads[i-1].Path {
-			lines++
-		}
-	}
-	return lines
-}

@@ -655,6 +655,100 @@ func listModel(n int) Model {
 	return Model{threads: list, filteredIndexes: indexes}
 }
 
+// threadsWithPaths builds a list whose entries follow the given paths, so a
+// test can shape the path grouping the line cost depends on.
+func threadsWithPaths(paths ...string) []threads.ReviewThread {
+	list := make([]threads.ReviewThread, 0, len(paths))
+	for i, path := range paths {
+		list = append(list, threads.ReviewThread{
+			ThreadID: fmt.Sprintf("t%d", i),
+			Path:     path,
+			Comments: []threads.ThreadComment{{ID: fmt.Sprintf("c%d", i), Author: "alice", Body: fmt.Sprintf("body-%d", i)}},
+		})
+	}
+	return list
+}
+
+// TestListLineEstimateMatchesWhatIsDrawn ties the pane's sizing to its
+// rendering. listLineEstimate tells sectionHeights how tall the list wants to
+// be; if it counts rows differently from buildThreadListLines, the pane is
+// mis-sized and nothing says so.
+func TestListLineEstimateMatchesWhatIsDrawn(t *testing.T) {
+	cases := map[string][]threads.ReviewThread{
+		"empty":          {},
+		"single":         threadsWithPaths("a.go"),
+		"one path":       threadsWithPaths("a.go", "a.go", "a.go"),
+		"all distinct":   threadsWithPaths("a.go", "b.go", "c.go"),
+		"grouped":        threadsWithPaths("a.go", "a.go", "b.go", "c.go", "c.go", "c.go"),
+		"path returns":   threadsWithPaths("a.go", "b.go", "a.go"),
+		"generated list": listModel(6).threads,
+	}
+
+	for name, list := range cases {
+		t.Run(name, func(t *testing.T) {
+			estimate := listLineEstimate(list)
+			unbounded := 2*len(list) + 2
+			drawn := len(buildThreadListLines(list, 0, unbounded, 100, 0, summarizePaths(list)))
+			if len(list) == 0 {
+				if estimate != 1 {
+					t.Fatalf("an empty list must still ask for its placeholder line, got %d", estimate)
+				}
+				return
+			}
+			if estimate != drawn {
+				t.Fatalf("estimate says %d lines, the renderer drew %d", estimate, drawn)
+			}
+		})
+	}
+}
+
+// costTo is how many lines the renderer needs to draw list[start..selected].
+func costTo(list []threads.ReviewThread, start, selected int, counts map[string]pathSummary) int {
+	window := list[:selected+1]
+	return len(buildThreadListLines(window, start, 2*len(window)+2, 100, selected, counts))
+}
+
+// TestThreadListStartFitsWhatIsDrawn ties the scroll calculation to the same
+// rule: the start it picks must leave the renderer room for the selection.
+func TestThreadListStartFitsWhatIsDrawn(t *testing.T) {
+	lists := [][]threads.ReviewThread{
+		threadsWithPaths("a.go", "a.go", "a.go", "a.go"),
+		threadsWithPaths("a.go", "b.go", "c.go", "d.go"),
+		threadsWithPaths("a.go", "a.go", "b.go", "c.go", "c.go", "c.go"),
+	}
+	for i, list := range lists {
+		counts := summarizePaths(list)
+		for height := 1; height <= 12; height++ {
+			for selected := range list {
+				for _, offset := range []int{0, 1, len(list) - 1} {
+					start := threadListStart(list, offset, selected, height)
+					lines := buildThreadListLines(list, start, height, 100, selected, counts)
+					if len(lines) > height {
+						t.Fatalf("list %d h=%d sel=%d off=%d: drew %d lines", i, height, selected, offset, len(lines))
+					}
+					// The start must also be as far back as it can be: an
+					// overcautious estimate leaves the pane half empty, and
+					// nothing about the rendered output would show it.
+					if cost := costTo(list, start, selected, counts); cost > height && start != selected {
+						t.Fatalf("list %d h=%d sel=%d off=%d: start %d needs %d lines", i, height, selected, offset, start, cost)
+					}
+					if want := clamp(offset, 0, selected); start > want {
+						if cost := costTo(list, start-1, selected, counts); cost <= height {
+							t.Fatalf("list %d h=%d sel=%d off=%d: start %d could have been %d, which needs only %d lines",
+								i, height, selected, offset, start, start-1, cost)
+						}
+					}
+					want := fmt.Sprintf("body-%d", selected)
+					if !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), want) {
+						t.Fatalf("list %d h=%d sel=%d off=%d: selection missing from:\n%s",
+							i, height, selected, offset, strings.Join(lines, "\n"))
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestRenderThreadListShowsSelectionAtEveryHeight(t *testing.T) {
 	model := listModel(6)
 	for _, height := range []int{1, 2, 3, 5} {

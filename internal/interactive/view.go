@@ -115,23 +115,56 @@ func renderThreadList(state Model, height int, width int) string {
 	return normalizeBlock(strings.Join(lines, "\n"), width, height)
 }
 
+// The thread list is priced in whole lines: an entry takes one, and the path
+// header above the first entry of each path takes one more.
+const (
+	threadRowLines  = 1
+	pathHeaderLines = 1
+)
+
+// listRowCost is what drawing the entry at idx costs when the window starts at
+// start. Everything that measures the list goes through here -- the estimate
+// that sizes the pane, the scroll calculation, and the draw itself -- because
+// the three drifting apart would leave the pane's height quietly disagreeing
+// with what is drawn in it.
+func listRowCost(list []threads.ReviewThread, idx, start int) int {
+	if idx == start || list[idx].Path != list[idx-1].Path {
+		return threadRowLines + pathHeaderLines
+	}
+	return threadRowLines
+}
+
+// listLineEstimate is how tall the thread list would be with nothing clipping
+// it, which is what the pane asks for before it is told its share.
+func listLineEstimate(list []threads.ReviewThread) int {
+	if len(list) == 0 {
+		return 1 // the "no threads" placeholder still needs its line
+	}
+	lines := 0
+	for idx := range list {
+		lines += listRowCost(list, idx, 0)
+	}
+	return lines
+}
+
 // threadListStart picks the first thread to draw so the selected one always
 // fits within height lines, scrolling back no further than the model's offset.
-// Line cost is monotone in start (one line per entry, plus one for each path it
-// opens), so a single backward walk from the selection is exact -- the old code
-// re-rendered the whole window on every retry, and could never satisfy a height
-// that left no room for a path header.
+// Line cost is monotone in start, so a single backward walk from the selection
+// is exact -- the old code re-rendered the whole window on every retry, and
+// could never satisfy a height that left no room for a path header.
 func threadListStart(list []threads.ReviewThread, desired, selected, height int) int {
 	selected = clamp(selected, 0, len(list)-1)
 	// A stale offset past the selection must never win, or the selected thread
 	// scrolls off the top and the pane looks frozen.
 	desired = clamp(desired, 0, selected)
 	start := selected
-	used := min(2, height) // the selected entry, plus its path header if it fits
+	used := min(listRowCost(list, selected, selected), height)
 	for candidate := selected - 1; candidate >= desired; candidate-- {
-		next := used + 2 // the candidate's entry, plus the header it now owns
+		// Prepending the candidate costs its own row and header, and refunds
+		// the header the entry below no longer opens when they share a path.
+		next := used + listRowCost(list, candidate, candidate)
 		if list[candidate].Path == list[candidate+1].Path {
-			next-- // the entry below no longer needs a header of its own
+			next -= pathHeaderLines
 		}
 		if next > height {
 			break
@@ -143,15 +176,14 @@ func threadListStart(list []threads.ReviewThread, desired, selected, height int)
 
 func buildThreadListLines(list []threads.ReviewThread, start int, height int, width int, selectedThread int, pathCounts map[string]pathSummary) []string {
 	lines := make([]string, 0, height)
-	lastPath := ""
 	for idx := start; idx < len(list) && len(lines) < height; idx++ {
 		thread := list[idx]
-		if idx == start || thread.Path != lastPath {
+		if listRowCost(list, idx, start) > threadRowLines {
 			// A header only earns a line when the entry it introduces fits too.
 			// The first one may be dropped -- at height 1 there is room for the
 			// selected entry only -- but a mid-list one may not, or the entry
 			// below would appear to belong to the previous path.
-			fits := len(lines)+1 < height
+			fits := len(lines)+pathHeaderLines < height
 			if !fits && idx != start {
 				break
 			}
@@ -160,7 +192,6 @@ func buildThreadListLines(list []threads.ReviewThread, start int, height int, wi
 				header := fmt.Sprintf("%s [%d resolved, %d unresolved]", thread.Path, counts.resolved, counts.unresolved)
 				lines = append(lines, pathHeaderStyle.Render(padListLine(header, width)))
 			}
-			lastPath = thread.Path
 		}
 		isLastInPath := idx == len(list)-1 || list[idx+1].Path != thread.Path
 		lines = append(lines, renderThreadListEntry(thread, isLastInPath, selectedThread == idx, width))
