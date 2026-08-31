@@ -869,3 +869,32 @@ func TestFormatThreadLines(t *testing.T) {
 }
 
 func ptr(v int) *int { return &v }
+
+func TestRenderDetailBlockKeepsFilterPromptVisibleInShortPane(t *testing.T) {
+	longBody := strings.Repeat("padding line\n", 24)
+	thread := threads.ReviewThread{
+		ThreadID: "t1",
+		Path:     "file.go",
+		Comments: []threads.ThreadComment{{ID: "c1", Author: "alice", Body: longBody}},
+	}
+	conversation := []threads.ConversationComment{
+		{Author: "alice"}, {Author: "amber"}, {Author: "andre"},
+		{Author: "anita"}, {Author: "arvid"}, {Author: "aurora"},
+	}
+	model := NewModel(conversation, []threads.ReviewThread{thread}, threads.PullRequestInfo{}, threads.Context{}, nil)
+	model.detailExpanded = true
+	model.detailMode = detailSnippet
+
+	filter := textinput.New()
+	filter.SetValue("a")
+	filter.Focus()
+
+	out := stripANSI(renderDetailBlock(model, 8, 80, StateFilter, textarea.New(), filter, "author", false, 0, false, -1, -1))
+
+	if got := len(strings.Split(out, "\n")); got != 8 {
+		t.Fatalf("expected exactly 8 lines, got %d", got)
+	}
+	if !strings.Contains(out, "Matching authors:") {
+		t.Fatalf("expected the author suggestions to stay on screen, got:\n%s", out)
+	}
+}

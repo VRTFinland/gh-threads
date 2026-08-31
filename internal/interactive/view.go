@@ -314,17 +314,26 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	if showStatus {
 		extras = append(extras, renderStatusPicker(statusIndex))
 	}
-	extras = filterEmptySections(extras)
+	extrasBlock := strings.Join(filterEmptySections(extras), "\n\n")
 
-	// Each extra section costs its own lines plus the blank separator line.
-	extraHeight := 0
-	for _, extra := range extras {
-		extraHeight += len(strings.Split(strings.TrimRight(extra, "\n"), "\n")) + 1
+	// The prompt claims the pane before the detail does: the user is typing into
+	// it, so it must stay visible even in a short pane. Keeping the head of the
+	// block keeps the input itself, trimming its suggestions first.
+	extrasHeight := 0
+	if extrasBlock != "" {
+		extrasLines := strings.Split(strings.TrimRight(extrasBlock, "\n"), "\n")
+		if maxExtras := vmax(1, height-2); len(extrasLines) > maxExtras {
+			extrasLines = extrasLines[:maxExtras]
+			extrasBlock = strings.Join(extrasLines, "\n")
+		}
+		extrasHeight = len(extrasLines) + 1 // plus the blank separator line
 	}
-	detail = windowDetailBlock(detail, height-extraHeight, anchor, currentState == StateReply)
+	// Never leave the detail without a line: at zero or less windowDetailBlock
+	// passes the content through unwindowed, and normalizeBlock would then keep
+	// its head and cut the prompt off the bottom.
+	detail = windowDetailBlock(detail, vmax(1, height-extrasHeight), anchor, currentState == StateReply)
 
-	sections := append([]string{detail}, extras...)
-	content := strings.Join(filterEmptySections(sections), "\n\n")
+	content := strings.Join(filterEmptySections([]string{detail, extrasBlock}), "\n\n")
 	return normalizeBlock(content, width, height)
 }
 

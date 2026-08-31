@@ -12,10 +12,16 @@ import (
 	"strings"
 )
 
-type Client struct{}
+type Client struct {
+	// exec runs a gh subcommand. It is a field so tests can drive the client
+	// without a real gh binary or network.
+	exec func(ctx context.Context, args ...string) ([]byte, error)
+}
 
 func NewClient() *Client {
-	return &Client{}
+	c := &Client{}
+	c.exec = c.runGH
+	return c
 }
 
 const blobQuery = `
@@ -110,11 +116,13 @@ func (c *Client) FileLines(ctx context.Context, owner, repo, commit, path string
 		"expression": expression,
 	}
 	if err := c.CallGraphQL(ctx, blobQuery, variables, &data); err != nil {
-		if isNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
+		return nil, fmt.Errorf("failed to read %s at %s: %w", path, commit, err)
 	}
+	// A blob that does not exist at this commit resolves to a null object, so
+	// absence arrives here as empty text rather than as an error. Matching error
+	// text for "404"/"not found" instead classified real transport and
+	// permission failures as absence, hiding them completely -- a workaround for
+	// snippet errors being fatal, which they no longer are.
 	text := data.Repository.Object.Text
 	if text == "" {
 		return nil, nil
@@ -122,14 +130,6 @@ func (c *Client) FileLines(ctx context.Context, owner, repo, commit, path string
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	return strings.Split(text, "\n"), nil
-}
-
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "404") || strings.Contains(msg, "not found")
 }
 
 func (c *Client) HasIssueCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error) {
@@ -188,6 +188,13 @@ func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 }
 
 func (c *Client) runBytes(ctx context.Context, args ...string) ([]byte, error) {
+	if c.exec != nil {
+		return c.exec(ctx, args...)
+	}
+	return c.runGH(ctx, args...)
+}
+
+func (c *Client) runGH(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
