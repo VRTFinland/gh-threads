@@ -51,8 +51,6 @@ type teaModel struct {
 	filterInput           textinput.Model
 	inputPurpose          string // "reply", "filter", "author"
 	statusIndex           int
-	showStatus            bool
-	showHelp              bool
 	authorSuggestionIndex int
 	statusSuggestionIndex int
 	loading               bool
@@ -143,7 +141,6 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state.infoMessage = "Thread status updated"
 		}
-		m.showStatus = false
 		m.state.state = StateView
 		m.state.applyFilters()
 		return m, nil
@@ -184,7 +181,6 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.detailMode = detailSnippet
 		}
 	case "?":
-		m.showHelp = true
 		m.state.state = StateHelp
 	case "h", "left":
 		if m.state.selectedComment > 0 {
@@ -209,7 +205,6 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "S":
 		if thread, ok := m.state.SelectedThread(); ok {
-			m.showStatus = true
 			if thread.IsResolved {
 				m.statusIndex = 0
 			} else {
@@ -410,7 +405,6 @@ func parseStatusInput(value string) (threads.StatusFilter, bool) {
 func (m *teaModel) updateStatus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.showStatus = false
 		m.state.state = StateView
 	case "j", "down":
 		if m.statusIndex < 1 {
@@ -423,7 +417,6 @@ func (m *teaModel) updateStatus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		thread, ok := m.state.SelectedThread()
 		if !ok {
-			m.showStatus = false
 			m.state.state = StateView
 			return m, nil
 		}
@@ -439,7 +432,6 @@ func (m *teaModel) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	default:
-		m.showHelp = false
 		m.state.state = StateView
 		return m, nil
 	}
@@ -463,7 +455,7 @@ func (m *teaModel) View() string {
 		m.replyInput.SetWidth(width - 2)
 		m.adjustReplyHeight()
 	}
-	return RenderView(m.state, width, height, listHeight, detailHeight, m.showStatus, m.statusIndex, m.showHelp, m.state.state, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
+	return RenderView(m.state, width, height, listHeight, detailHeight, m.statusIndex, m.replyInput, m.filterInput, m.inputPurpose, m.authorSuggestionIndex, m.statusSuggestionIndex)
 }
 
 func (m *teaModel) adjustReplyHeight() {

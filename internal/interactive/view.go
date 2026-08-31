@@ -66,7 +66,7 @@ var aiAuthorAliases = map[string][]string{
 	"gemini":   {"gemini", "google gemini"},
 }
 
-func RenderView(state Model, width int, height int, listHeight int, detailHeight int, showStatus bool, statusIndex int, showHelp bool, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
+func RenderView(state Model, width int, height int, listHeight int, detailHeight int, statusIndex int, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, authorSuggestionIndex int, statusSuggestionIndex int) string {
 	if height <= 0 {
 		height = 60
 	}
@@ -83,7 +83,7 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	b.WriteString("\n")
 	b.WriteString(renderDivider(width))
 	b.WriteString("\n")
-	detail := renderDetailBlock(state, detailHeight, width, currentState, replyInput, filterInput, inputPurpose, showStatus, statusIndex, showHelp, authorSuggestionIndex, statusSuggestionIndex)
+	detail := renderDetailBlock(state, detailHeight, width, replyInput, filterInput, inputPurpose, statusIndex, authorSuggestionIndex, statusSuggestionIndex)
 	b.WriteString(detail)
 	b.WriteString("\n")
 	b.WriteString(renderBottomBar(state, width))
@@ -291,27 +291,27 @@ func padListLine(text string, width int) string {
 	return padOrTrim(" "+text, width)
 }
 
-func renderDetailBlock(state Model, height int, width int, currentState State, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, showStatus bool, statusIndex int, showHelp bool, authorSuggestionIndex int, statusSuggestionIndex int) string {
-	if showHelp {
+func renderDetailBlock(state Model, height int, width int, replyInput textarea.Model, filterInput textinput.Model, inputPurpose string, statusIndex int, authorSuggestionIndex int, statusSuggestionIndex int) string {
+	if state.state == StateHelp {
 		return centerBlock(renderHelp(width), width, height)
 	}
-	detail, anchor := buildDetailContent(state, height, currentState, replyInput, width)
+	detail, anchor := buildDetailContent(state, height, replyInput, width)
 
 	extras := make([]string, 0, 3)
-	if currentState == StateFilter {
+	if state.state == StateFilter {
 		extras = append(extras, filterInput.View())
 	}
-	if currentState == StateFilter && inputPurpose == "author" {
+	if state.state == StateFilter && inputPurpose == "author" {
 		if suggestions := state.AuthorSuggestions(filterInput.Value(), authorSuggestionLimit); len(suggestions) > 0 {
 			extras = append(extras, renderAuthorSuggestions(suggestions, authorSuggestionIndex))
 		}
 	}
-	if currentState == StateFilter && inputPurpose == "status" {
+	if state.state == StateFilter && inputPurpose == "status" {
 		if suggestions := statusSuggestions(filterInput.Value()); len(suggestions) > 0 {
 			extras = append(extras, renderStatusSuggestions(suggestions, statusSuggestionIndex))
 		}
 	}
-	if showStatus {
+	if state.state == StateStatus {
 		extras = append(extras, renderStatusPicker(statusIndex))
 	}
 	extrasBlock := strings.Join(filterEmptySections(extras), "\n\n")
@@ -331,7 +331,7 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	// Never leave the detail without a line: at zero or less windowDetailBlock
 	// passes the content through unwindowed, and normalizeBlock would then keep
 	// its head and cut the prompt off the bottom.
-	detail = windowDetailBlock(detail, max(1, height-extrasHeight), anchor, currentState == StateReply)
+	detail = windowDetailBlock(detail, max(1, height-extrasHeight), anchor, state.state == StateReply)
 
 	content := strings.Join(filterEmptySections([]string{detail, extrasBlock}), "\n\n")
 	return normalizeBlock(content, width, height)
@@ -372,7 +372,7 @@ type detailAnchor struct {
 	end   int
 }
 
-func buildDetailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) (string, detailAnchor) {
+func buildDetailContent(state Model, maxHeight int, replyInput textarea.Model, width int) (string, detailAnchor) {
 	anchor := detailAnchor{start: -1, end: -1}
 	thread, ok := state.SelectedThread()
 	if !ok {
@@ -425,7 +425,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 		if i == selected {
 			anchor.end = lineCount()
 		}
-		if currentState == StateReply && i == selected {
+		if state.state == StateReply && i == selected {
 			header := strings.TrimSpace(renderReplyTarget(state))
 			if header != "" {
 				b.WriteString(header)

@@ -80,8 +80,8 @@ func TestHelpModalTogglesOnQuestionMark(t *testing.T) {
 
 	tm.updateView(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}, Alt: false})
 
-	if tm.state.state != StateHelp || !tm.showHelp {
-		t.Fatalf("expected help state, got state=%s showHelp=%v", tm.state.state, tm.showHelp)
+	if tm.state.state != StateHelp {
+		t.Fatalf("expected help state, got %s", tm.state.state)
 	}
 	out := tm.View()
 	if !strings.Contains(out, "Help / Keybindings") || !strings.Contains(out, "j / k / ↑ / ↓") || !strings.Contains(out, "h / ←") {
@@ -89,8 +89,8 @@ func TestHelpModalTogglesOnQuestionMark(t *testing.T) {
 	}
 
 	tm.updateHelp(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	if tm.state.state != StateView || tm.showHelp {
-		t.Fatalf("expected help to close on ?, state=%s showHelp=%v", tm.state.state, tm.showHelp)
+	if tm.state.state != StateView {
+		t.Fatalf("expected help to close on ?, got %s", tm.state.state)
 	}
 }
 
