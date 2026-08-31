@@ -313,7 +313,10 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case m.authorSuggestionIndex >= 0 && m.authorSuggestionIndex < len(suggestions):
 				value = suggestions[m.authorSuggestionIndex]
 				m.filterInput.SetValue(value)
-			case len(suggestions) == 1:
+			// Only auto-accept a lone suggestion the user actually narrowed to.
+			// An empty query matches every author, so in a single-author PR this
+			// would set the filter on the very keystrokes that clear it.
+			case strings.TrimSpace(value) != "" && len(suggestions) == 1:
 				value = suggestions[0]
 				m.filterInput.SetValue(value)
 			}

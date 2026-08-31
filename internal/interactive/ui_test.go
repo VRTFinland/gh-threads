@@ -198,3 +198,38 @@ func TestUpdateFilterEmptyStatusWithHighlightedSuggestionApplies(t *testing.T) {
 		t.Fatalf("expected the highlighted suggestion to change the filter, got %q", tm.state.filters.Status)
 	}
 }
+
+// Pressing a clears the input, and an empty query matches every author. In a PR
+// with a single commenting author that made a + enter -- the natural way to
+// clear the filter -- set it instead.
+func TestUpdateFilterEmptyAuthorClearsFilterWithSingleAuthor(t *testing.T) {
+	conversation := []threads.ConversationComment{{Author: "Alice"}, {Author: "Alice"}}
+	model := NewModel(conversation, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.SetFilterAuthor("Alice")
+	tm.state.state = StateFilter
+	tm.inputPurpose = "author"
+	tm.filterInput.SetValue("")
+
+	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if tm.state.filters.Author != "" {
+		t.Fatalf("expected the author filter to be cleared, got %q", tm.state.filters.Author)
+	}
+}
+
+func TestUpdateFilterEmptyAuthorClearsFilterWithManyAuthors(t *testing.T) {
+	conversation := []threads.ConversationComment{{Author: "Alice"}, {Author: "Bob"}}
+	model := NewModel(conversation, nil, threads.PullRequestInfo{}, threads.Context{}, nil)
+	tm := newTeaModel(model, ProgramConfig{})
+	tm.state.SetFilterAuthor("Alice")
+	tm.state.state = StateFilter
+	tm.inputPurpose = "author"
+	tm.filterInput.SetValue("")
+
+	tm.updateFilter(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if tm.state.filters.Author != "" {
+		t.Fatalf("expected the author filter to be cleared, got %q", tm.state.filters.Author)
+	}
+}
