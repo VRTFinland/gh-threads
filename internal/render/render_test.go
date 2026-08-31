@@ -388,3 +388,7 @@ func TestWrapPlainLineMeasuresVisibleWidth(t *testing.T) {
 		t.Fatalf("visible text is 26 columns and fits in 40; ANSI must not count, got %d lines: %q", len(got), got)
 	}
 }
+
+func ptr(value int) *int {
+	return &value
+}

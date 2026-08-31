@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/VRTFinland/gh-threads/internal/diff"
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
 
@@ -323,69 +324,33 @@ func printHistoricalSnippet(w io.Writer, snippet *threads.HistoricalSnippet, col
 	return bodyEmitted
 }
 
-func formatDiff(diff string, colour bool, newLine, oldLine *int) []string {
-	if diff == "" {
-		return nil
-	}
-	lines := strings.Split(strings.ReplaceAll(diff, "\r", ""), "\n")
-	entries := make([]diffEntry, 0, len(lines))
-
-	var currentNew, currentOld *int
-
-	parseMeta := func(token string) *int {
-		if len(token) < 2 {
-			return nil
-		}
-		token = token[1:]
-		if idx := strings.Index(token, ","); idx >= 0 {
-			token = token[:idx]
-		}
-		val, err := strconv.Atoi(token)
-		if err != nil {
-			return nil
-		}
-		v := val - 1
-		return &v
-	}
-
-	for _, raw := range lines {
-		switch {
-		case strings.HasPrefix(raw, "@@"):
-			parts := strings.Fields(raw)
-			if len(parts) >= 3 {
-				currentOld = parseMeta(parts[1])
-				currentNew = parseMeta(parts[2])
-			}
-			entries = append(entries, diffEntry{line: magenta.apply(raw, colour)})
+// formatDiff colours a hunk and marks the line the comment is anchored to. The
+// hunk's own line numbering comes from internal/diff, which the TUI reads the
+// same way.
+func formatDiff(hunk string, colour bool, newLine, oldLine *int) []string {
+	parsed := diff.ParseHunk(hunk)
+	entries := make([]diffEntry, 0, len(parsed))
+	for _, line := range parsed {
+		if line.Kind == diff.Header {
+			entries = append(entries, diffEntry{line: magenta.apply(line.Text, colour)})
 			continue
-		case strings.HasPrefix(raw, "+"):
-			if currentNew == nil {
-				currentNew = ptr(0)
-			}
-			*currentNew++
-			highlight := newLine != nil && currentNew != nil && *currentNew == *newLine
-			line := green.apply(raw, colour)
-			entries = append(entries, diffEntry{line: emphasize(line, colour, highlight), highlight: highlight})
-		case strings.HasPrefix(raw, "-"):
-			if currentOld == nil {
-				currentOld = ptr(0)
-			}
-			*currentOld++
-			highlight := oldLine != nil && currentOld != nil && *currentOld == *oldLine
-			line := red.apply(raw, colour)
-			entries = append(entries, diffEntry{line: emphasize(line, colour, highlight), highlight: highlight})
-		default:
-			if currentNew != nil {
-				*currentNew++
-			}
-			if currentOld != nil {
-				*currentOld++
-			}
-			highlight := (newLine != nil && currentNew != nil && *currentNew == *newLine) ||
-				(oldLine != nil && currentOld != nil && *currentOld == *oldLine)
-			line := grey.apply(raw, colour)
-			entries = append(entries, diffEntry{line: emphasize(line, colour, highlight), highlight: highlight})
 		}
+		var (
+			highlight bool
+			coloured  string
+		)
+		switch line.Kind {
+		case diff.Added:
+			highlight = line.At(diff.Added, newLine)
+			coloured = green.apply(line.Text, colour)
+		case diff.Removed:
+			highlight = line.At(diff.Removed, oldLine)
+			coloured = red.apply(line.Text, colour)
+		default:
+			highlight = line.At(diff.Added, newLine) || line.At(diff.Removed, oldLine)
+			coloured = grey.apply(line.Text, colour)
+		}
+		entries = append(entries, diffEntry{line: emphasize(coloured, colour, highlight), highlight: highlight})
 	}
 
 	trimmed := trimAroundHighlights(entries, newLine != nil || oldLine != nil)
@@ -433,10 +398,6 @@ func printMultiline(w io.Writer, first, rest, text string) {
 
 func clamp(value, minValue, maxValue int) int {
 	return max(minValue, min(maxValue, value))
-}
-
-func ptr(value int) *int {
-	return &value
 }
 
 func emphasize(text string, colour bool, highlight bool) string {

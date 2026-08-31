@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -14,6 +13,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/VRTFinland/gh-threads/internal/diff"
 	"github.com/VRTFinland/gh-threads/internal/threads"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -1043,71 +1043,32 @@ type diffEntry struct {
 	highlight bool
 }
 
-func formatDiffHunk(diff string, targetNew *int, targetOld *int) []string {
-	clean := strings.ReplaceAll(diff, "\r", "")
-	clean = strings.Trim(clean, "\n")
+// formatDiffHunk marks the line the comment is anchored to and clips the hunk
+// to a readable window. The hunk's own line numbering comes from internal/diff,
+// which the summary renderer reads the same way.
+func formatDiffHunk(hunk string, targetNew *int, targetOld *int) []string {
+	clean := strings.Trim(strings.ReplaceAll(hunk, "\r", ""), "\n")
 	if clean == "" {
 		return nil
 	}
-	rawLines := strings.Split(clean, "\n")
-	entries := make([]diffEntry, 0, len(rawLines))
-	var currentNew, currentOld int
-	var hasNew, hasOld bool
-	for _, raw := range rawLines {
-		if strings.HasPrefix(raw, "@@") {
-			if parts := strings.Fields(raw); len(parts) >= 3 {
-				if start, ok := parseHunkStart(parts[1]); ok {
-					currentOld = start - 1
-					hasOld = true
-				} else {
-					hasOld = false
-				}
-				if start, ok := parseHunkStart(parts[2]); ok {
-					currentNew = start - 1
-					hasNew = true
-				} else {
-					hasNew = false
-				}
-			}
-			entries = append(entries, diffEntry{line: raw})
-			continue
-		}
-		highlight := false
-		switch {
-		case strings.HasPrefix(raw, "+"):
-			if !hasNew {
-				hasNew = true
-				currentNew = 0
-			}
-			currentNew++
-			if targetNew != nil && currentNew == *targetNew {
-				highlight = true
-			}
-		case strings.HasPrefix(raw, "-"):
-			if !hasOld {
-				hasOld = true
-				currentOld = 0
-			}
-			currentOld++
-			if targetOld != nil && currentOld == *targetOld {
-				highlight = true
-			}
+	parsed := diff.ParseHunk(clean)
+	entries := make([]diffEntry, 0, len(parsed))
+	for _, line := range parsed {
+		var highlight bool
+		switch line.Kind {
+		case diff.Header:
+		case diff.Added:
+			highlight = line.At(diff.Added, targetNew)
+		case diff.Removed:
+			highlight = line.At(diff.Removed, targetOld)
 		default:
-			if hasNew {
-				currentNew++
-			}
-			if hasOld {
-				currentOld++
-			}
-			if (targetNew != nil && hasNew && currentNew == *targetNew) || (targetOld != nil && hasOld && currentOld == *targetOld) {
-				highlight = true
-			}
+			highlight = line.At(diff.Added, targetNew) || line.At(diff.Removed, targetOld)
 		}
-		line := raw
+		text := line.Text
 		if highlight {
-			line = ">> " + raw
+			text = ">> " + text
 		}
-		entries = append(entries, diffEntry{line: line, highlight: highlight})
+		entries = append(entries, diffEntry{line: text, highlight: highlight})
 	}
 	if len(entries) <= 15 {
 		return collectDiffLines(entries)
@@ -1139,24 +1100,6 @@ func collectDiffLines(entries []diffEntry) []string {
 		lines = append(lines, entry.line)
 	}
 	return lines
-}
-
-func parseHunkStart(meta string) (int, bool) {
-	meta = strings.TrimSpace(meta)
-	if meta == "" {
-		return 0, false
-	}
-	if meta[0] == '+' || meta[0] == '-' {
-		meta = meta[1:]
-	}
-	if idx := strings.Index(meta, ","); idx != -1 {
-		meta = meta[:idx]
-	}
-	value, err := strconv.Atoi(meta)
-	if err != nil {
-		return 0, false
-	}
-	return value, true
 }
 
 func sectionHeights(total int, listLines int) (int, int) {
