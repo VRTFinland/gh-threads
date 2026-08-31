@@ -7,8 +7,8 @@ DIST_DIR ?= dist
 build: ensure-dist ## Build the CLI for the current platform
 	GO111MODULE=on go build -o $(DIST_DIR)/$(APP_NAME) $(CMD_PATH)
 
-test: ## Run the Go test suite
-	GO111MODULE=on go test ./...
+test: ## Run the Go test suite (race detector on: the fetch path is concurrent)
+	GO111MODULE=on go test -race ./...
 
 vet: ## Run go vet across all packages
 	GO111MODULE=on go vet ./...

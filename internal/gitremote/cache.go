@@ -3,6 +3,7 @@ package gitremote
 import (
 	"context"
 	"errors"
+	"sync"
 )
 
 // FileLinesFetcher is the subset of the GitHub client the cache needs.
@@ -11,7 +12,9 @@ type FileLinesFetcher interface {
 }
 
 type Cache struct {
-	client  FileLinesFetcher
+	client FileLinesFetcher
+
+	mu      sync.Mutex
 	entries map[fileKey][]string
 }
 
@@ -36,14 +39,23 @@ func (c *Cache) GetLines(ctx context.Context, owner, repo, commit, path string) 
 		return nil, false, errors.New("invalid commit or path")
 	}
 	key := fileKey{commit: commit, path: path}
-	if lines, ok := c.entries[key]; ok {
-		return lines, len(lines) > 0, nil
+	c.mu.Lock()
+	cached, ok := c.entries[key]
+	c.mu.Unlock()
+	if ok {
+		return cached, len(cached) > 0, nil
 	}
 
+	// Fetch outside the lock: holding it across a subprocess and a network round
+	// trip would queue concurrent callers back into a single file. Two callers
+	// racing on the same key would duplicate one fetch, which callers avoid by
+	// deduplicating keys before fanning out.
 	lines, err = c.client.FileLines(ctx, owner, repo, commit, path)
 	if err != nil {
 		return nil, false, err
 	}
+	c.mu.Lock()
 	c.entries[key] = lines
+	c.mu.Unlock()
 	return lines, len(lines) > 0, nil
 }

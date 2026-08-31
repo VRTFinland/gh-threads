@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/VRTFinland/gh-threads/internal/gitlocal"
@@ -17,6 +18,7 @@ type Service struct {
 	localRepo         *gitlocal.Repo
 	remoteCache       *gitremote.Cache
 	cache             Cache
+	logMu             sync.Mutex
 	logWriter         io.Writer
 	fetchConversation func(context.Context, Context) ([]ConversationComment, error)
 	fetchReview       func(context.Context, Context, bool) ([]ReviewThread, error)
@@ -47,10 +49,14 @@ func NewService(client GitHubClient, localRepo *gitlocal.Repo, cacheManager Cach
 // terminal via the alternate screen, so writing warnings to stderr while it
 // runs would corrupt the rendering; callers mute the service for its duration.
 func (s *Service) SetLogWriter(w io.Writer) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
 	s.logWriter = w
 }
 
 func (s *Service) logf(format string, args ...any) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
 	if s.logWriter == nil {
 		return
 	}
