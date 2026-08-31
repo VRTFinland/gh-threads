@@ -1038,3 +1038,27 @@ func BenchmarkSnippetDisplayLinesWarm(b *testing.B) {
 		snippetDisplayLines(snippet)
 	}
 }
+
+func TestRenderPickList(t *testing.T) {
+	got := renderPickList("Pick:", []string{"one", "two", "three"}, 1)
+	want := "Pick:\n  one\n> two\n  three"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	if got := renderPickList("Pick:", nil, 0); got != "" {
+		t.Fatalf("an empty list renders nothing, got %q", got)
+	}
+	if got := renderPickList("Pick:", []string{"one"}, 5); got != "Pick:\n  one" {
+		t.Fatalf("an out-of-range selection marks nothing, got %q", got)
+	}
+	if got := renderPickList("Pick:", []string{"one"}, -1); got != "Pick:\n  one" {
+		t.Fatalf("no selection marks nothing, got %q", got)
+	}
+}
+
+func TestStatusPickerMarksTheCurrentStatus(t *testing.T) {
+	if got := renderStatusPicker(1); got != "Set status:\n  resolved\n> unresolved" {
+		t.Fatalf("unexpected status picker: %q", got)
+	}
+}

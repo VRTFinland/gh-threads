@@ -560,56 +560,40 @@ func renderDivider(width int) string {
 	return dividerStyle.Render(strings.Repeat("-", width))
 }
 
-func renderStatusPicker(index int) string {
-	options := []string{"resolved", "unresolved"}
+// renderPickList draws a titled list with a marker on the chosen row. The three
+// prompts this pane can show -- the status picker and the two suggestion lists
+// -- are the same widget under different titles, and were three copies of it.
+// A selected index outside the list simply marks nothing.
+func renderPickList(title string, options []string, selected int) string {
+	if len(options) == 0 {
+		return ""
+	}
 	var b strings.Builder
-	b.WriteString("Set status:\n")
-	for i, option := range options {
+	b.WriteString(title + "\n")
+	for idx, option := range options {
 		prefix := "  "
-		if i == index {
+		if idx == selected {
 			prefix = "> "
 		}
 		b.WriteString(prefix + option + "\n")
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderStatusPicker(index int) string {
+	return renderPickList("Set status:", []string{"resolved", "unresolved"}, index)
 }
 
 func renderAuthorSuggestions(matches []string, selected int) string {
-	if len(matches) == 0 {
-		return ""
-	}
-	if selected >= len(matches) {
-		selected = -1
-	}
-	var b strings.Builder
-	b.WriteString("Matching authors:\n")
-	for idx, name := range matches {
-		prefix := "  "
-		if idx == selected {
-			prefix = "> "
-		}
-		b.WriteString(prefix + name + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
+	return renderPickList("Matching authors:", matches, selected)
 }
 
 func renderStatusSuggestions(matches []statusOption, selected int) string {
-	if len(matches) == 0 {
-		return ""
+	labels := make([]string, len(matches))
+	for i, option := range matches {
+		labels[i] = option.label
 	}
-	if selected >= len(matches) {
-		selected = -1
-	}
-	var b strings.Builder
-	b.WriteString("Statuses:\n")
-	for idx, option := range matches {
-		prefix := "  "
-		if idx == selected {
-			prefix = "> "
-		}
-		b.WriteString(prefix + option.label + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
+	return renderPickList("Statuses:", labels, selected)
 }
 
 func renderHelp(width int) string {
