@@ -648,19 +648,14 @@ type blobResult struct {
 type snippetTarget struct {
 	comment *ThreadComment
 	line    int
-	key     fileKey
+	key     gitremote.FileKey
 }
 
 // fileRequest is one file together with every line a comment anchors to in it,
 // so the file is read once and cut for all of them.
 type fileRequest struct {
-	key   fileKey
+	key   gitremote.FileKey
 	lines []int
-}
-
-type fileKey struct {
-	commit string
-	path   string
 }
 
 // attachHistoricalSnippets attaches code context to comments. Snippets are
@@ -693,7 +688,7 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 	// Build phase, back on one goroutine: comment.Snippet writes need no lock,
 	// and walking the results in request order keeps the reported error the same
 	// from run to run.
-	blocks := make(map[fileKey]map[int]gitremote.Block, len(requests))
+	blocks := make(map[gitremote.FileKey]map[int]gitremote.Block, len(requests))
 	var (
 		failed   int
 		firstErr error
@@ -714,8 +709,8 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 			continue
 		}
 		target.comment.Snippet = &HistoricalSnippet{
-			Commit:        target.key.commit,
-			Path:          target.key.path,
+			Commit:        target.key.Commit,
+			Path:          target.key.Path,
 			StartLine:     block.StartLine,
 			HighlightLine: block.HighlightLine,
 			Lines:         block.Lines,
@@ -736,9 +731,9 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileReque
 		targets  []snippetTarget
 		requests []fileRequest
 	)
-	index := make(map[fileKey]int)
+	index := make(map[gitremote.FileKey]int)
 	type fileLine struct {
-		key  fileKey
+		key  gitremote.FileKey
 		line int
 	}
 	seen := make(map[fileLine]bool)
@@ -754,7 +749,7 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileReque
 			if comment.CommitSHA == "" || comment.Path == "" || !anchor.Valid() {
 				continue
 			}
-			key := fileKey{commit: comment.CommitSHA, path: comment.Path}
+			key := gitremote.FileKey{Commit: comment.CommitSHA, Path: comment.Path}
 			targets = append(targets, snippetTarget{comment: comment, line: anchor.End, key: key})
 
 			at, ok := index[key]
@@ -776,13 +771,13 @@ func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileReque
 // local checkout of the commit over a remote read.
 func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, request fileRequest) (map[int]gitremote.Block, error) {
 	if s.localRepo != nil && s.localRepo.Available() {
-		if lines, err := s.localRepo.FileLines(ctx, request.key.commit, request.key.path); err == nil && len(lines) > 0 {
+		if lines, err := s.localRepo.FileLines(ctx, request.key.Commit, request.key.Path); err == nil && len(lines) > 0 {
 			return cutAll(lines, request.lines), nil
 		}
 	}
 	// A file absent at this commit comes back as an empty result, not an error:
 	// retrying the same query would only repeat the miss.
-	return s.remoteCache.Blocks(ctx, ghCtx.Owner, ghCtx.Repo, request.key.commit, request.key.path, request.lines)
+	return s.remoteCache.Blocks(ctx, ghCtx.Owner, ghCtx.Repo, request.key.Commit, request.key.Path, request.lines)
 }
 
 func cutAll(content []string, lines []int) map[int]gitremote.Block {

@@ -3,7 +3,6 @@ package interactive
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -58,7 +57,6 @@ var (
 	markdownRendererErr  error
 )
 
-var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
 var aiAuthorAliases = map[string][]string{
 	"codex":    {"codex"},
 	"co-pilot": {"copilot", "co-pilot", "co pilot", "github copilot"},
@@ -251,8 +249,8 @@ func threadPreview(thread threads.ReviewThread, maxWidth int) string {
 		return "(no comment)"
 	}
 	body := strings.TrimSpace(thread.Comments[0].Body)
-	sanitized := stripSuggestionBlocks(body)
-	suggestionOnly := isSuggestionBody(body) && strings.TrimSpace(sanitized) == ""
+	sanitized := threads.StripSuggestions(body)
+	suggestionOnly := threads.HasSuggestion(body) && strings.TrimSpace(sanitized) == ""
 	rendered := cachedCommentMarkdown(sanitized)
 	joined := strings.TrimSpace(strings.Join(rendered, " "))
 	if suggestionOnly {
@@ -268,14 +266,6 @@ func threadPreview(thread threads.ReviewThread, maxWidth int) string {
 		return xansi.Truncate(joined, maxWidth, "...")
 	}
 	return joined
-}
-
-func isSuggestionBody(body string) bool {
-	return strings.Contains(strings.ToLower(body), "```suggestion")
-}
-
-func stripSuggestionBlocks(body string) string {
-	return suggestionBlockRegexp.ReplaceAllString(body, "")
 }
 
 func displayAuthor(name string) string {

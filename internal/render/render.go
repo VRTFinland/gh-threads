@@ -201,26 +201,12 @@ func renderCommentBody(body string, markdown bool, width int) []string {
 }
 
 func replaceSuggestionBlocks(body string, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor, colour bool, markdown bool) string {
-	matches := suggestionBlockRegexp.FindAllStringSubmatchIndex(body, -1)
-	if len(matches) == 0 {
-		return body
-	}
-
-	var builder strings.Builder
-	last := 0
-	for _, match := range matches {
-		builder.WriteString(body[last:match[0]])
-		content := body[match[2]:match[3]]
-		if replacement := renderSuggestionDiff(content, snippet, anchor, colour, markdown); replacement != "" {
-			builder.WriteString(replacement)
-		} else {
-			builder.WriteString(body[match[0]:match[1]])
-		}
-		last = match[1]
-	}
-	builder.WriteString(body[last:])
-
-	return builder.String()
+	return threads.ReplaceSuggestions(body, func(suggested string) (string, bool) {
+		replacement := renderSuggestionDiff(suggested, snippet, anchor, colour, markdown)
+		// An empty replacement means the suggestion could not be diffed against
+		// the snippet, so the fence is left as the author wrote it.
+		return replacement, replacement != ""
+	})
 }
 
 func renderSuggestionDiff(content string, snippet *threads.HistoricalSnippet, anchor threads.LineAnchor, colour bool, markdown bool) string {
@@ -396,8 +382,9 @@ func printMultiline(w io.Writer, first, rest, text string) {
 	}
 }
 
-func clamp(value, minValue, maxValue int) int {
-	return max(minValue, min(maxValue, value))
+// clamp holds value inside [low, high]; see the copy in internal/interactive.
+func clamp(value, low, high int) int {
+	return max(low, min(high, value))
 }
 
 func emphasize(text string, colour bool, highlight bool) string {
@@ -612,8 +599,6 @@ func wrapPlainLine(line string, limit int) []string {
 	}
 	return result
 }
-
-var suggestionBlockRegexp = regexp.MustCompile("(?s)```suggestion[^\\n]*\\n(.*?)\\n?```")
 
 // visibleWidth reports how many terminal columns text occupies: ANSI escapes
 // take none, and an emoji or CJK rune takes two. Counting runes instead padded

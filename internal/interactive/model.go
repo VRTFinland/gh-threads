@@ -228,14 +228,12 @@ func (m *Model) ensureSelectionVisible() {
 	m.listOffset = clamp(m.listOffset, 0, max(0, len(m.filteredIndexes)-window))
 }
 
-func clamp(value, minVal, maxVal int) int {
-	if value < minVal {
-		return minVal
-	}
-	if value > maxVal {
-		return maxVal
-	}
-	return value
+// clamp holds value inside [low, high]. render has its own copy: three lines
+// are not worth a package between them, but they are worth agreeing on, and
+// these two used to disagree -- given a high below the low, one returned the
+// low and the other the high. Written this way the low always wins, in both.
+func clamp(value, low, high int) int {
+	return max(low, min(high, value))
 }
 
 func (m *Model) SetListWindowSize(size int) {

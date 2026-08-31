@@ -31,16 +31,18 @@ type Cache struct {
 	// do not exist at that commit. Both survive for the process lifetime; see
 	// Blocks for why errors do not.
 	blocks  map[blockKey]Block
-	missing map[fileKey]bool
+	missing map[FileKey]bool
 }
 
-type fileKey struct {
-	commit string
-	path   string
+// FileKey identifies one blob: a path as it stood at one commit. Callers group
+// their work by it before fetching, so it is exported rather than mirrored.
+type FileKey struct {
+	Commit string
+	Path   string
 }
 
 type blockKey struct {
-	file fileKey
+	file FileKey
 	line int
 }
 
@@ -55,7 +57,7 @@ func New(client FileLinesFetcher, radius int) *Cache {
 		client:  client,
 		radius:  radius,
 		blocks:  make(map[blockKey]Block),
-		missing: make(map[fileKey]bool),
+		missing: make(map[FileKey]bool),
 	}
 }
 
@@ -68,7 +70,7 @@ func (c *Cache) Blocks(ctx context.Context, owner, repo, commit, path string, li
 	if commit == "" || path == "" {
 		return nil, errors.New("invalid commit or path")
 	}
-	file := fileKey{commit: commit, path: path}
+	file := FileKey{Commit: commit, Path: path}
 
 	found := make(map[int]Block, len(lines))
 	missing := c.cached(file, lines, found)
@@ -103,7 +105,7 @@ func (c *Cache) Blocks(ctx context.Context, owner, repo, commit, path string, li
 }
 
 // cached fills found from memory and returns the lines still to be fetched.
-func (c *Cache) cached(file fileKey, lines []int, found map[int]Block) []int {
+func (c *Cache) cached(file FileKey, lines []int, found map[int]Block) []int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.missing[file] {
