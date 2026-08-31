@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/VRTFinland/gh-threads/internal/gitlocal"
 	"github.com/VRTFinland/gh-threads/internal/gitremote"
 )
@@ -612,6 +614,22 @@ func cursorValue(value string) string {
 	return value
 }
 
+// blobFetchConcurrency bounds the fan-out. GitHub's secondary rate limits
+// discourage many concurrent requests, so this is deliberately modest.
+const blobFetchConcurrency = 8
+
+type blobResult struct {
+	lines []string
+	err   error
+}
+
+// snippetTarget is one comment waiting for the file its snippet is cut from.
+type snippetTarget struct {
+	comment *ThreadComment
+	line    int
+	key     fileKey
+}
+
 type fileKey struct {
 	commit string
 	path   string
@@ -622,11 +640,70 @@ type fileKey struct {
 // number of (commit, path) pairs that could not be read is reported alongside
 // the first error instead of aborting the whole command.
 func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) {
+	targets, keys := collectSnippetTargets(threads)
+	if len(keys) == 0 {
+		return
+	}
+
+	// Fetch phase. Each file is a gh subprocess plus a network round trip, and
+	// they are independent, so they run concurrently. Every goroutine owns one
+	// result slot, which means nothing here is shared and nothing needs a lock.
+	// Errors are recorded rather than returned: a snippet is decoration, and an
+	// errgroup context would cancel the siblings of the first failure.
+	results := make([]blobResult, len(keys))
+	var g errgroup.Group
+	g.SetLimit(blobFetchConcurrency)
+	for i, key := range keys {
+		g.Go(func() error {
+			lines, err := s.fetchLocalOrRemote(ctx, ghCtx, key.commit, key.path)
+			results[i] = blobResult{lines: lines, err: err}
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	// Build phase, back on one goroutine: comment.Snippet writes need no lock,
+	// and walking the results in key order keeps the reported error the same
+	// from run to run.
+	lines := make(map[fileKey][]string, len(keys))
 	var (
 		failed   int
 		firstErr error
 	)
-	cache := make(map[fileKey][]string)
+	for i, key := range keys {
+		if err := results[i].err; err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		lines[key] = results[i].lines
+	}
+	for _, target := range targets {
+		content := lines[target.key]
+		if len(content) == 0 {
+			continue
+		}
+		if snippet := buildSnippet(content, target.line, target.key.commit, target.key.path); snippet != nil {
+			target.comment.Snippet = snippet
+		}
+	}
+
+	if failed > 0 {
+		s.logf("Warning: could not load code context for %d file(s): %v", failed, firstErr)
+	}
+}
+
+// collectSnippetTargets pairs every comment that still needs a snippet with the
+// file it is cut from, and returns the distinct files in encounter order so the
+// fetch fans out over each one exactly once.
+func collectSnippetTargets(threads []ReviewThread) ([]snippetTarget, []fileKey) {
+	var (
+		targets []snippetTarget
+		keys    []fileKey
+	)
+	seen := make(map[fileKey]bool)
 	for threadIdx := range threads {
 		for commentIdx := range threads[threadIdx].Comments {
 			comment := &threads[threadIdx].Comments[commentIdx]
@@ -641,29 +718,14 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 				continue
 			}
 			key := fileKey{commit: comment.CommitSHA, path: comment.Path}
-			lines, ok := cache[key]
-			if !ok {
-				fetched, err := s.fetchLocalOrRemote(ctx, ghCtx, key.commit, key.path)
-				if err != nil {
-					failed++
-					if firstErr == nil {
-						firstErr = err
-					}
-				}
-				lines = fetched
-				cache[key] = lines
-			}
-			if len(lines) == 0 {
-				continue
-			}
-			if snippet := buildSnippet(lines, *linePtr, comment.CommitSHA, comment.Path); snippet != nil {
-				comment.Snippet = snippet
+			targets = append(targets, snippetTarget{comment: comment, line: *linePtr, key: key})
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
 			}
 		}
 	}
-	if failed > 0 {
-		s.logf("Warning: could not load code context for %d file(s): %v", failed, firstErr)
-	}
+	return targets, keys
 }
 
 func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {

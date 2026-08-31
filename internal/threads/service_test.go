@@ -8,7 +8,9 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type stubCache struct {
@@ -26,6 +28,7 @@ func (s *stubCache) Save(Context, *Entry) error {
 }
 
 type fakeClient struct {
+	mu             sync.Mutex
 	issueUpdates   bool
 	reviewUpdates  bool
 	graphQLCalls   []string
@@ -37,7 +40,9 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) CallGraphQL(ctx context.Context, query string, variables map[string]string, target any) error {
+	f.mu.Lock()
 	f.graphQLCalls = append(f.graphQLCalls, query)
+	f.mu.Unlock()
 	if f.graphQLJSON != "" && target != nil {
 		return json.Unmarshal([]byte(f.graphQLJSON), target)
 	}
@@ -51,11 +56,20 @@ func (f *fakeClient) HasReviewCommentUpdates(ctx context.Context, owner, repo st
 }
 
 func (f *fakeClient) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
+	f.mu.Lock()
 	f.fileLinesCalls = append(f.fileLinesCalls, commit+":"+path)
-	if f.fileLinesFn != nil {
-		return f.fileLinesFn(commit, path)
+	fn := f.fileLinesFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(commit, path)
 	}
 	return nil, nil
+}
+
+func (f *fakeClient) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.fileLinesCalls)
 }
 
 func TestFetchDataUsesCacheWhenNoUpdates(t *testing.T) {
@@ -237,7 +251,7 @@ func TestFetchLocalOrRemoteQueriesMissingFileOnce(t *testing.T) {
 
 	svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
 
-	if got := len(fake.fileLinesCalls); got != 1 {
+	if got := fake.callCount(); got != 1 {
 		t.Fatalf("expected a missing file to be fetched once, got %d calls: %v", got, fake.fileLinesCalls)
 	}
 }
@@ -251,7 +265,7 @@ func TestFetchLocalOrRemoteReusesCacheAcrossFetches(t *testing.T) {
 		svc.attachHistoricalSnippets(context.Background(), ghCtx, threadWithComments(2, "abc", "gone.go"))
 	}
 
-	if got := len(fake.fileLinesCalls); got != 1 {
+	if got := fake.callCount(); got != 1 {
 		t.Fatalf("expected the negative result to be cached across refreshes, got %d calls", got)
 	}
 }
@@ -368,5 +382,65 @@ func TestFetchReviewThreadsRequestsAndMapsOriginalStartLine(t *testing.T) {
 func TestCacheVersionRejectsOlderEntries(t *testing.T) {
 	if cacheVersion < 2 {
 		t.Fatalf("cacheVersion must be bumped so entries without OriginalStartLine are dropped, got %d", cacheVersion)
+	}
+}
+
+// TestAttachHistoricalSnippetsFetchesFilesConcurrently proves the fan-out, not
+// just its result: the fake blocks every fetch until all of them have started,
+// so a serial implementation cannot get past the barrier and fails on the
+// deadline instead of quietly passing.
+func TestAttachHistoricalSnippetsFetchesFilesConcurrently(t *testing.T) {
+	const files = 4
+	arrived := make(chan struct{}, files)
+	release := make(chan struct{})
+
+	fake := &fakeClient{fileLinesFn: func(commit, path string) ([]string, error) {
+		arrived <- struct{}{}
+		<-release
+		return []string{"one", "two", "three"}, nil
+	}}
+	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+
+	line := 2
+	comments := make([]ThreadComment, 0, files)
+	for i := 0; i < files; i++ {
+		comments = append(comments, ThreadComment{
+			ID:           strconv.Itoa(i),
+			CommitSHA:    "abc",
+			Path:         "file" + strconv.Itoa(i) + ".go",
+			OriginalLine: &line,
+		})
+	}
+	reviewThreads := []ReviewThread{{ThreadID: "t1", Comments: comments}}
+
+	done := make(chan struct{})
+	go func() {
+		svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
+		close(done)
+	}()
+
+	deadline := time.After(10 * time.Second)
+	for i := 0; i < files; i++ {
+		select {
+		case <-arrived:
+		case <-deadline:
+			t.Fatalf("only %d of %d fetches were in flight at once", i, files)
+		}
+	}
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attachHistoricalSnippets never finished")
+	}
+
+	for i := range reviewThreads[0].Comments {
+		if reviewThreads[0].Comments[i].Snippet == nil {
+			t.Fatalf("comment %d got no snippet", i)
+		}
+	}
+	if got := fake.callCount(); got != files {
+		t.Fatalf("expected %d fetches, got %d", files, got)
 	}
 }
