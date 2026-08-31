@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/VRTFinland/gh-threads/internal/ghcli"
@@ -136,16 +137,23 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	includeHistory := true
 
-	conversationComments, reviewThreads, err := service.FetchData(ctx, ghContext, includeHistory, *refreshCacheFlag)
+	var (
+		prInfo               threads.PullRequestInfo
+		conversationComments []threads.ConversationComment
+		reviewThreads        []threads.ReviewThread
+	)
+	if *interactiveFlag {
+		prInfo, conversationComments, reviewThreads, err = fetchForInteractive(ctx, service, ghContext, *refreshCacheFlag)
+	} else {
+		// Only the TUI shows pull-request metadata; the CLI path must not spend
+		// a round trip on it.
+		conversationComments, reviewThreads, err = service.FetchData(ctx, ghContext, includeHistory, *refreshCacheFlag)
+	}
 	if err != nil {
 		return err
 	}
 
 	if *interactiveFlag {
-		prInfo, err := service.FetchPullRequestInfo(ctx, ghContext)
-		if err != nil {
-			return fmt.Errorf("failed to fetch pull request info: %w", err)
-		}
 		cfg := interactive.ProgramConfig{
 			Conversation: conversationComments,
 			Threads:      reviewThreads,
@@ -154,15 +162,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 			Context:      ghContext,
 			Ctx:          ctx,
 			Refresh: func(force bool) (threads.PullRequestInfo, []threads.ConversationComment, []threads.ReviewThread, error) {
-				convo, refreshedThreads, err := service.FetchData(ctx, ghContext, true, force)
-				if err != nil {
-					return threads.PullRequestInfo{}, nil, nil, err
-				}
-				info, err := service.FetchPullRequestInfo(ctx, ghContext)
-				if err != nil {
-					return threads.PullRequestInfo{}, nil, nil, err
-				}
-				return info, convo, refreshedThreads, nil
+				return fetchForInteractive(ctx, service, ghContext, force)
 			},
 		}
 		// The TUI owns the screen from here on; stray warnings would corrupt it.
@@ -197,6 +197,35 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	}
 
 	return nil
+}
+
+// fetchForInteractive runs the thread fetch and the pull-request metadata fetch
+// together. They are independent and each is its own gh round trip, so the TUI
+// would otherwise wait for them in sequence on startup and on every refresh.
+func fetchForInteractive(ctx context.Context, service *threads.Service, ghContext threads.Context, force bool) (threads.PullRequestInfo, []threads.ConversationComment, []threads.ReviewThread, error) {
+	var (
+		info     threads.PullRequestInfo
+		convo    []threads.ConversationComment
+		reviewed []threads.ReviewThread
+	)
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		var err error
+		convo, reviewed, err = service.FetchData(groupCtx, ghContext, true, force)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		info, err = service.FetchPullRequestInfo(groupCtx, ghContext)
+		if err != nil {
+			return fmt.Errorf("failed to fetch pull request info: %w", err)
+		}
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		return threads.PullRequestInfo{}, nil, nil, err
+	}
+	return info, convo, reviewed, nil
 }
 
 func (a *App) detectPullRequestFromBranch(ctx context.Context, owner, repo string) (int, error) {

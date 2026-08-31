@@ -342,21 +342,38 @@ func (s *Service) FetchData(
 	sinceReviewQuery := nextTimestamp(sinceReview)
 
 	needConversation := entry == nil || sinceConversation == ""
-	if !needConversation && sinceConversationQuery != "" {
-		updated, err := s.client.HasIssueCommentUpdates(ctx, ghCtx.Owner, ghCtx.Repo, ghCtx.PullRequest, sinceConversationQuery)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to check conversation updates: %w", err)
-		}
-		needConversation = updated
-	}
-
 	needReview := entry == nil || sinceReview == ""
-	if !needReview && sinceReviewQuery != "" {
-		updated, err := s.client.HasReviewCommentUpdates(ctx, ghCtx.Owner, ghCtx.Repo, ghCtx.PullRequest, sinceReviewQuery)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to check review updates: %w", err)
+	checkConversation := !needConversation && sinceConversationQuery != ""
+	checkReview := !needReview && sinceReviewQuery != ""
+
+	// Two independent probes, one gh round trip each, on the path every cached
+	// run takes. They write separate variables, so only the Wait below is
+	// needed to publish them.
+	if checkConversation || checkReview {
+		group, groupCtx := errgroup.WithContext(ctx)
+		if checkConversation {
+			group.Go(func() error {
+				updated, err := s.client.HasIssueCommentUpdates(groupCtx, ghCtx.Owner, ghCtx.Repo, ghCtx.PullRequest, sinceConversationQuery)
+				if err != nil {
+					return fmt.Errorf("failed to check conversation updates: %w", err)
+				}
+				needConversation = updated
+				return nil
+			})
 		}
-		needReview = updated
+		if checkReview {
+			group.Go(func() error {
+				updated, err := s.client.HasReviewCommentUpdates(groupCtx, ghCtx.Owner, ghCtx.Repo, ghCtx.PullRequest, sinceReviewQuery)
+				if err != nil {
+					return fmt.Errorf("failed to check review updates: %w", err)
+				}
+				needReview = updated
+				return nil
+			})
+		}
+		if err := group.Wait(); err != nil {
+			return nil, nil, err
+		}
 	}
 	if !needReview && missingDatabaseIDs(review) {
 		s.logf("Cached threads missing comment identifiers; refetching review threads.")

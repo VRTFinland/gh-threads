@@ -28,15 +28,16 @@ func (s *stubCache) Save(Context, *Entry) error {
 }
 
 type fakeClient struct {
-	mu             sync.Mutex
-	issueUpdates   bool
-	reviewUpdates  bool
-	graphQLCalls   []string
-	restPath       string
-	restBody       map[string]string
-	fileLinesCalls []string
-	fileLinesFn    func(commit, path string) ([]string, error)
-	graphQLJSON    string
+	mu               sync.Mutex
+	issueUpdates     bool
+	reviewUpdates    bool
+	graphQLCalls     []string
+	restPath         string
+	restBody         map[string]string
+	reviewUpdatesErr error
+	fileLinesCalls   []string
+	fileLinesFn      func(commit, path string) ([]string, error)
+	graphQLJSON      string
 }
 
 func (f *fakeClient) CallGraphQL(ctx context.Context, query string, variables map[string]string, target any) error {
@@ -52,7 +53,7 @@ func (f *fakeClient) HasIssueCommentUpdates(ctx context.Context, owner, repo str
 	return f.issueUpdates, nil
 }
 func (f *fakeClient) HasReviewCommentUpdates(ctx context.Context, owner, repo string, prNumber int, since string) (bool, error) {
-	return f.reviewUpdates, nil
+	return f.reviewUpdates, f.reviewUpdatesErr
 }
 
 func (f *fakeClient) FileLines(ctx context.Context, owner, repo, commit, path string) ([]string, error) {
@@ -442,5 +443,25 @@ func TestAttachHistoricalSnippetsFetchesFilesConcurrently(t *testing.T) {
 	}
 	if got := fake.callCount(); got != files {
 		t.Fatalf("expected %d fetches, got %d", files, got)
+	}
+}
+
+// The two update probes run concurrently, and errgroup surfaces only the first
+// error, so each must still carry its own wrapper or a failure becomes
+// unattributable.
+func TestFetchDataWrapsTheFailingUpdateProbe(t *testing.T) {
+	cacheEntry := &Entry{
+		ConversationComments: []ConversationComment{{ID: "c1", CreatedAt: "2025-05-01T12:00:00Z"}},
+		ReviewThreads:        []ReviewThread{{ThreadID: "t1", Comments: []ThreadComment{{ID: "rc1", DatabaseID: 9, CreatedAt: "2025-05-01T12:00:00Z"}}}},
+		LastConversationSync: "2025-05-01T12:00:00Z",
+		LastReviewSync:       "2025-05-01T12:00:00Z",
+	}
+	fake := &fakeClient{reviewUpdatesErr: errors.New("boom")}
+	svc := NewService(fake, nil, &stubCache{entry: cacheEntry}, io.Discard)
+
+	_, _, err := svc.FetchData(context.Background(), Context{Owner: "o", Repo: "r", PullRequest: 1}, false, false)
+
+	if err == nil || !strings.Contains(err.Error(), "failed to check review updates") {
+		t.Fatalf("expected the review probe to be named in the error, got %v", err)
 	}
 }
