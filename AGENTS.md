@@ -18,7 +18,7 @@ Use the existing Go test layout under `internal/`: e.g., extend `internal/thread
 
 ## Gotchas
 - Terminal text: measure with `lipgloss.Width`, truncate with `x/ansi`'s `Truncate`/`Strip`. `utf8.RuneCountInString` and rune slicing miscount ANSI escapes and double-width runes, and can cut mid-escape.
-- Line anchors: GitHub returns `line`/`startLine` (current diff) and `originalLine`/`originalStartLine` (original commit). Use one pair or the other, never a field from each; snippets are built in the original space.
+- Line anchors: GitHub returns `line`/`startLine` (current diff) and `originalLine`/`originalStartLine` (original commit). Never mix a field from one pair with a field from the other. Do not read the four fields directly: call `ThreadComment.Anchor`/`ReviewThread.Anchor` in `internal/threads/anchor.go`, which returns a `LineAnchor` carrying the space it came from. Snippets are cut in `threads.SnippetSpace`, and anything drawn over a snippet must be measured in it.
 - Adding a persisted field to `ThreadComment`/`ReviewThread` means: GraphQL query, the `gh*` struct, the public type, and a `cacheVersion` bump in `internal/threads/cache.go`.
 - `View()` runs on every keystroke: route any new Glamour render through `renderCache` in `internal/interactive/view.go` (an uncached snippet highlight costs ~1.8 ms per frame).
 - Never write to stderr while the TUI holds the alt screen; `internal/app` mutes the service with `SetLogWriter(io.Discard)`.
