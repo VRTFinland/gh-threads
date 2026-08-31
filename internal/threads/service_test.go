@@ -235,9 +235,7 @@ func TestFetchLocalOrRemoteQueriesMissingFileOnce(t *testing.T) {
 	svc := NewService(fake, nil, &stubCache{}, io.Discard)
 	reviewThreads := threadWithComments(5, "abc", "gone.go")
 
-	if _, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
 
 	if got := len(fake.fileLinesCalls); got != 1 {
 		t.Fatalf("expected a missing file to be fetched once, got %d calls: %v", got, fake.fileLinesCalls)
@@ -250,9 +248,7 @@ func TestFetchLocalOrRemoteReusesCacheAcrossFetches(t *testing.T) {
 	ghCtx := Context{Owner: "o", Repo: "r"}
 
 	for i := 0; i < 3; i++ {
-		if _, err := svc.attachHistoricalSnippets(context.Background(), ghCtx, threadWithComments(2, "abc", "gone.go")); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		svc.attachHistoricalSnippets(context.Background(), ghCtx, threadWithComments(2, "abc", "gone.go"))
 	}
 
 	if got := len(fake.fileLinesCalls); got != 1 {
@@ -261,14 +257,15 @@ func TestFetchLocalOrRemoteReusesCacheAcrossFetches(t *testing.T) {
 }
 
 func TestAttachHistoricalSnippetsSkipsMissingBlobWithoutError(t *testing.T) {
+	logs := &bytes.Buffer{}
 	fake := &fakeClient{fileLinesFn: func(string, string) ([]string, error) { return nil, nil }}
-	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	svc := NewService(fake, nil, &stubCache{}, logs)
 	reviewThreads := threadWithComments(1, "abc", "gone.go")
 
-	failed, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
+	svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
 
-	if err != nil || failed != 0 {
-		t.Fatalf("a missing blob is not a failure, got failed=%d err=%v", failed, err)
+	if logs.Len() != 0 {
+		t.Fatalf("a missing blob is not a failure and must not warn, got %q", logs.String())
 	}
 	if reviewThreads[0].Comments[0].Snippet != nil {
 		t.Fatalf("expected no snippet for a missing blob")
@@ -282,17 +279,18 @@ func TestAttachHistoricalSnippetsSurvivesFetchFailure(t *testing.T) {
 		}
 		return []string{"one", "two", "three"}, nil
 	}}
-	svc := NewService(fake, nil, &stubCache{}, io.Discard)
+	logs := &bytes.Buffer{}
+	svc := NewService(fake, nil, &stubCache{}, logs)
 	line := 2
 	reviewThreads := []ReviewThread{{ThreadID: "t1", Comments: []ThreadComment{
 		{ID: "bad", CommitSHA: "abc", Path: "bad.go", OriginalLine: &line},
 		{ID: "good", CommitSHA: "abc", Path: "good.go", OriginalLine: &line},
 	}}}
 
-	failed, err := svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
+	svc.attachHistoricalSnippets(context.Background(), Context{Owner: "o", Repo: "r"}, reviewThreads)
 
-	if failed != 1 || err == nil {
-		t.Fatalf("expected the failure to be reported, got failed=%d err=%v", failed, err)
+	if !strings.Contains(logs.String(), "could not load code context for 1 file(s)") {
+		t.Fatalf("expected the failure to be reported once, got %q", logs.String())
 	}
 	if reviewThreads[0].Comments[0].Snippet != nil {
 		t.Fatalf("expected no snippet for the failed file")

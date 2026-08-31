@@ -12,7 +12,7 @@ type FileLinesFetcher interface {
 
 type Cache struct {
 	client  FileLinesFetcher
-	entries map[fileKey]cacheEntry
+	entries map[fileKey][]string
 }
 
 type fileKey struct {
@@ -20,15 +20,10 @@ type fileKey struct {
 	path   string
 }
 
-type cacheEntry struct {
-	lines []string
-	found bool
-}
-
 func New(client FileLinesFetcher) *Cache {
 	return &Cache{
 		client:  client,
-		entries: make(map[fileKey]cacheEntry),
+		entries: make(map[fileKey][]string),
 	}
 }
 
@@ -41,15 +36,14 @@ func (c *Cache) GetLines(ctx context.Context, owner, repo, commit, path string) 
 		return nil, false, errors.New("invalid commit or path")
 	}
 	key := fileKey{commit: commit, path: path}
-	if entry, ok := c.entries[key]; ok {
-		return entry.lines, entry.found, nil
+	if lines, ok := c.entries[key]; ok {
+		return lines, len(lines) > 0, nil
 	}
 
-	fetched, err := c.client.FileLines(ctx, owner, repo, commit, path)
+	lines, err = c.client.FileLines(ctx, owner, repo, commit, path)
 	if err != nil {
 		return nil, false, err
 	}
-	entry := cacheEntry{lines: fetched, found: len(fetched) > 0}
-	c.entries[key] = entry
-	return entry.lines, entry.found, nil
+	c.entries[key] = lines
+	return lines, len(lines) > 0, nil
 }

@@ -50,17 +50,12 @@ func FilterReviewThreads(threads []ReviewThread, author string, status StatusFil
 		if needText && !matchesThreadText(thread.Path, comments, textLower) {
 			continue
 		}
-		filtered = append(filtered, ReviewThread{
-			ThreadID:          thread.ThreadID,
-			Path:              thread.Path,
-			Line:              thread.Line,
-			OriginalLine:      thread.OriginalLine,
-			StartLine:         thread.StartLine,
-			OriginalStartLine: thread.OriginalStartLine,
-			IsResolved:        thread.IsResolved,
-			IsOutdated:        thread.IsOutdated,
-			Comments:          comments,
-		})
+		// Copy the thread wholesale and override only what filtering changes.
+		// Listing fields here meant every new field had to be remembered in a
+		// third place, and a forgotten one silently dropped out of CLI output.
+		match := thread
+		match.Comments = comments
+		filtered = append(filtered, match)
 	}
 	return filtered
 }

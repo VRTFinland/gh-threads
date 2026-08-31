@@ -3,7 +3,6 @@ package interactive
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -55,7 +54,7 @@ func TestRenderDetailCollapsedShowsSelectedComment(t *testing.T) {
 		detailExpanded:  false,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(detailContent(model, 5, StateView, textarea.New(), 80))
+	out := ansi.Strip(detailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "third") {
 		t.Fatalf("expected the selected comment to be shown, got %s", out)
 	}
@@ -139,7 +138,7 @@ func TestRenderDetailHighlightsSelectionMarker(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(detailContent(model, 10, StateView, textarea.New(), 80))
+	out := ansi.Strip(detailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, " > bob at") {
 		t.Fatalf("expected selection marker before selected comment, got %q", out)
 	}
@@ -173,7 +172,7 @@ func TestRenderDetailShowsSnippetOnlyForFirstComment(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(detailContent(model, 20, StateView, textarea.New(), 80))
+	out := ansi.Strip(detailContent(model, 20, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "first snippet line") {
 		t.Fatalf("expected first snippet to be rendered: %s", out)
 	}
@@ -203,7 +202,7 @@ func TestRenderDetailShowsSnippetEvenInDiffMode(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailDiff,
 	}
-	out := stripANSI(detailContent(model, 10, StateView, textarea.New(), 80))
+	out := ansi.Strip(detailContent(model, 10, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "snippet body") {
 		t.Fatalf("expected snippet to remain visible in diff mode, got %s", out)
 	}
@@ -244,7 +243,7 @@ func TestRenderBottomBarFillsWidth(t *testing.T) {
 	}
 	width := 60
 	out := renderBottomBar(model, width)
-	if got := lipgloss.Width(stripANSI(out)); got != width {
+	if got := lipgloss.Width(ansi.Strip(out)); got != width {
 		t.Fatalf("expected width %d, got %d in %q", width, got, out)
 	}
 }
@@ -260,7 +259,7 @@ func TestRenderBottomBarKeepsHelpTextVisible(t *testing.T) {
 	}
 	width := 50
 	out := renderBottomBar(model, width)
-	plain := strings.TrimRight(stripANSI(out), " ")
+	plain := strings.TrimRight(ansi.Strip(out), " ")
 	if !strings.HasSuffix(plain, "Press ? for help") {
 		t.Fatalf("expected help text to be visible, got %q", plain)
 	}
@@ -277,7 +276,7 @@ func TestRenderBottomBarShowsHelpTextWhenLeftCollapsed(t *testing.T) {
 	right := "Press ? for help"
 	width := lipgloss.Width(right) + 1
 	out := renderBottomBar(model, width)
-	plain := stripANSI(out)
+	plain := ansi.Strip(out)
 	if strings.Contains(plain, "filters:") {
 		t.Fatalf("expected filters section to be omitted when width exhausted, got %q", plain)
 	}
@@ -298,10 +297,10 @@ func TestRenderBottomBarSurvivesAnsiTruncate(t *testing.T) {
 	width := 80
 	out := renderBottomBar(model, width)
 	truncated := ansi.Truncate(out, width, "")
-	if !strings.Contains(stripANSI(truncated), "Press ? for help") {
+	if !strings.Contains(ansi.Strip(truncated), "Press ? for help") {
 		t.Fatalf("truncated output lost help text: %q", truncated)
 	}
-	if got := lipgloss.Width(stripANSI(truncated)); got != width {
+	if got := lipgloss.Width(ansi.Strip(truncated)); got != width {
 		t.Fatalf("expected truncated width %d, got %d", width, got)
 	}
 }
@@ -373,7 +372,7 @@ func TestSectionHeightsCapsListAtThirtyPercent(t *testing.T) {
 	totalHeight := 60
 	listHeight, detailHeight := sectionHeights(totalHeight, 50)
 	contentHeight := totalHeight - 3
-	expectedList := vmax(3, contentHeight*3/10)
+	expectedList := max(3, contentHeight*3/10)
 	if listHeight != expectedList {
 		t.Fatalf("expected list height %d with many threads, got %d", expectedList, listHeight)
 	}
@@ -399,21 +398,21 @@ func TestRenderThreadListGroupsByPath(t *testing.T) {
 		{
 			ThreadID:   "t1",
 			Path:       "path/a.go",
-			Line:       intPtr(3),
+			Line:       ptr(3),
 			IsResolved: false,
 			Comments:   []threads.ThreadComment{{ID: "c1", Author: "alice", Body: "first"}},
 		},
 		{
 			ThreadID:   "t2",
 			Path:       "path/a.go",
-			Line:       intPtr(5),
+			Line:       ptr(5),
 			IsResolved: true,
 			Comments:   []threads.ThreadComment{{ID: "c2", Author: "bob", Body: "second"}},
 		},
 		{
 			ThreadID:   "t3",
 			Path:       "path/b.go",
-			Line:       intPtr(9),
+			Line:       ptr(9),
 			IsResolved: false,
 			Comments:   []threads.ThreadComment{{ID: "c3", Author: "carol", Body: "third"}},
 		},
@@ -423,7 +422,7 @@ func TestRenderThreadListGroupsByPath(t *testing.T) {
 		filteredIndexes: []int{0, 1, 2},
 		selectedThread:  1,
 	}
-	out := stripANSI(renderThreadList(model, 10, 120))
+	out := ansi.Strip(renderThreadList(model, 10, 120))
 	if strings.Count(out, " path/a.go [1 resolved, 1 unresolved]") != 1 {
 		t.Fatalf("expected single header for path/a.go, got %q", out)
 	}
@@ -444,7 +443,7 @@ func TestRenderThreadListShowsSuggestionPreview(t *testing.T) {
 		{
 			ThreadID:   "t-suggestion",
 			Path:       "path/a.go",
-			Line:       intPtr(10),
+			Line:       ptr(10),
 			IsResolved: false,
 			Comments:   []threads.ThreadComment{{ID: "c1", Author: "alice", Body: body}},
 		},
@@ -454,7 +453,7 @@ func TestRenderThreadListShowsSuggestionPreview(t *testing.T) {
 		filteredIndexes: []int{0},
 		selectedThread:  0,
 	}
-	out := stripANSI(renderThreadList(model, 5, 120))
+	out := ansi.Strip(renderThreadList(model, 5, 120))
 	if strings.Contains(out, "suggestion") {
 		t.Fatalf("expected non-suggestion text to be shown when present, got %q", out)
 	}
@@ -478,7 +477,7 @@ func TestDisplayAuthorReplacesAINameInDetail(t *testing.T) {
 		detailExpanded:  true,
 		detailMode:      detailSnippet,
 	}
-	out := stripANSI(detailContent(model, 5, StateView, textarea.New(), 80))
+	out := ansi.Strip(detailContent(model, 5, StateView, textarea.New(), 80))
 	if !strings.Contains(out, "🤖 co-pilot at") {
 		t.Fatalf("expected AI author label, got %q", out)
 	}
@@ -491,7 +490,7 @@ func TestDisplayAuthorReplacesAINameInList(t *testing.T) {
 	thread := threads.ReviewThread{
 		ThreadID:   "ai-list",
 		Path:       "foo.go",
-		Line:       intPtr(12),
+		Line:       ptr(12),
 		IsResolved: false,
 		Comments:   []threads.ThreadComment{{ID: "c1", Author: "Codex", Body: "hi"}},
 	}
@@ -500,7 +499,7 @@ func TestDisplayAuthorReplacesAINameInList(t *testing.T) {
 		filteredIndexes: []int{0},
 		selectedThread:  0,
 	}
-	out := stripANSI(renderThreadList(model, 5, 80))
+	out := ansi.Strip(renderThreadList(model, 5, 80))
 	if !strings.Contains(out, "🤖 codex") {
 		t.Fatalf("expected AI label in list, got %q", out)
 	}
@@ -576,16 +575,6 @@ func TestRenderCommentMarkdownReturnsLines(t *testing.T) {
 	}
 }
 
-var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
-
-func stripANSI(s string) string {
-	return ansiRegexp.ReplaceAllString(s, "")
-}
-
-func intPtr(v int) *int {
-	return &v
-}
-
 func TestRenderDetailBlockKeepsReplyEditorVisible(t *testing.T) {
 	longBody := strings.Repeat("padding line\n", 24)
 	thread := threads.ReviewThread{
@@ -608,7 +597,7 @@ func TestRenderDetailBlockKeepsReplyEditorVisible(t *testing.T) {
 	reply.SetWidth(60)
 	reply.SetValue("my draft reply")
 
-	out := stripANSI(renderDetailBlock(model, 20, 80, StateReply, reply, textinput.New(), "reply", false, 0, false, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 20, 80, StateReply, reply, textinput.New(), "reply", false, 0, false, -1, -1))
 
 	if !strings.Contains(out, "Replying to") {
 		t.Fatalf("expected reply target header to stay on screen, got:\n%s", out)
@@ -640,7 +629,7 @@ func TestRenderDetailBlockKeepsSelectionVisibleWhenScrolled(t *testing.T) {
 		detailMode:      detailSnippet,
 	}
 
-	out := stripANSI(renderDetailBlock(model, 20, 80, StateView, textarea.New(), textinput.New(), "", false, 0, false, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 20, 80, StateView, textarea.New(), textinput.New(), "", false, 0, false, -1, -1))
 
 	if !strings.Contains(out, "> bob at") {
 		t.Fatalf("expected selected comment header to stay on screen, got:\n%s", out)
@@ -670,7 +659,7 @@ func TestRenderThreadListShowsSelectionAtEveryHeight(t *testing.T) {
 		for selected := 0; selected < 6; selected++ {
 			model.selectedThread = selected
 			model.listOffset = 0
-			out := stripANSI(renderThreadList(model, height, 100))
+			out := ansi.Strip(renderThreadList(model, height, 100))
 			if got := len(strings.Split(out, "\n")); got != height {
 				t.Fatalf("height=%d selected=%d: expected %d lines, got %d", height, selected, height, got)
 			}
@@ -687,7 +676,7 @@ func TestRenderThreadListIgnoresStaleOffsetPastSelection(t *testing.T) {
 	model.selectedThread = 0
 	model.listOffset = 5
 
-	out := stripANSI(renderThreadList(model, 4, 100))
+	out := ansi.Strip(renderThreadList(model, 4, 100))
 
 	if !strings.Contains(out, "body-0") {
 		t.Fatalf("expected the selection to win over a stale offset, got:\n%s", out)
@@ -743,9 +732,9 @@ func TestRenderDetailCollapsedNeverShowsMoreThanExpanded(t *testing.T) {
 	model := detailModel(8)
 	for height := 1; height <= 60; height++ {
 		model.detailExpanded = true
-		expanded := strings.Count(stripANSI(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
+		expanded := strings.Count(ansi.Strip(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
 		model.detailExpanded = false
-		collapsed := strings.Count(stripANSI(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
+		collapsed := strings.Count(ansi.Strip(detailContent(model, height, StateView, textarea.New(), 80)), "body-")
 
 		if collapsed > expanded {
 			t.Fatalf("height=%d: collapsed showed %d comments, expanded only %d", height, collapsed, expanded)
@@ -756,11 +745,7 @@ func TestRenderDetailCollapsedNeverShowsMoreThanExpanded(t *testing.T) {
 	}
 }
 
-func resetMarkdownCache() {
-	markdownCacheMu.Lock()
-	markdownCache = make(map[string][]string, 64)
-	markdownCacheMu.Unlock()
-}
+func resetMarkdownCache() { markdownCache.reset() }
 
 func TestCachedCommentMarkdownMatchesUncached(t *testing.T) {
 	resetMarkdownCache()
@@ -775,10 +760,8 @@ func TestCachedCommentMarkdownHitsCache(t *testing.T) {
 	cachedCommentMarkdown("hello")
 	cachedCommentMarkdown("hello")
 
-	markdownCacheMu.RLock()
-	defer markdownCacheMu.RUnlock()
-	if len(markdownCache) != 1 {
-		t.Fatalf("expected one cache entry, got %d", len(markdownCache))
+	if got := markdownCache.size(); got != 1 {
+		t.Fatalf("expected one cache entry, got %d", got)
 	}
 }
 
@@ -801,10 +784,8 @@ func TestCachedCommentMarkdownEvicts(t *testing.T) {
 		cachedCommentMarkdown(fmt.Sprintf("body-%d", i))
 	}
 
-	markdownCacheMu.RLock()
-	defer markdownCacheMu.RUnlock()
-	if len(markdownCache) > markdownCacheLimit {
-		t.Fatalf("cache grew past its limit: %d", len(markdownCache))
+	if got := markdownCache.size(); got > markdownCacheLimit {
+		t.Fatalf("cache grew past its limit: %d", got)
 	}
 }
 
@@ -889,7 +870,7 @@ func TestRenderDetailBlockKeepsFilterPromptVisibleInShortPane(t *testing.T) {
 	filter.SetValue("a")
 	filter.Focus()
 
-	out := stripANSI(renderDetailBlock(model, 8, 80, StateFilter, textarea.New(), filter, "author", false, 0, false, -1, -1))
+	out := ansi.Strip(renderDetailBlock(model, 8, 80, StateFilter, textarea.New(), filter, "author", false, 0, false, -1, -1))
 
 	if got := len(strings.Split(out, "\n")); got != 8 {
 		t.Fatalf("expected exactly 8 lines, got %d", got)
@@ -909,8 +890,8 @@ func TestPadOrTrimTruncatesAnsiSafely(t *testing.T) {
 	}
 	// A cut in the middle of an escape sequence leaves a dangling ESC that
 	// bleeds colour into the rest of the screen.
-	if strings.Count(got, "\x1b") > 0 && !strings.HasSuffix(stripANSI(got), "...") {
-		t.Fatalf("expected the truncation marker to survive, got %q", stripANSI(got))
+	if strings.Count(got, "\x1b") > 0 && !strings.HasSuffix(ansi.Strip(got), "...") {
+		t.Fatalf("expected the truncation marker to survive, got %q", ansi.Strip(got))
 	}
 	for _, part := range strings.Split(got, "\x1b")[1:] {
 		if !strings.Contains(part, "m") {
@@ -931,4 +912,31 @@ func TestPadOrTrimHandlesWideRunes(t *testing.T) {
 func detailContent(state Model, maxHeight int, currentState State, replyInput textarea.Model, width int) string {
 	content, _ := buildDetailContent(state, maxHeight, currentState, replyInput, width)
 	return content
+}
+
+func benchSnippet() *threads.HistoricalSnippet {
+	lines := make([]string, 0, 15)
+	for i := 0; i < 15; i++ {
+		lines = append(lines, fmt.Sprintf("\tif err := doThing(%d); err != nil { return err }", i))
+	}
+	return &threads.HistoricalSnippet{
+		Commit: "abcdef1", Path: "internal/x/file.go", StartLine: 10, HighlightLine: 17, Lines: lines,
+	}
+}
+
+func BenchmarkSnippetDisplayLinesCold(b *testing.B) {
+	snippet := benchSnippet()
+	for i := 0; i < b.N; i++ {
+		snippetCache.reset()
+		snippetDisplayLines(snippet)
+	}
+}
+
+func BenchmarkSnippetDisplayLinesWarm(b *testing.B) {
+	snippet := benchSnippet()
+	snippetDisplayLines(snippet)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		snippetDisplayLines(snippet)
+	}
 }

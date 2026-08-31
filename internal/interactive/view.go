@@ -73,8 +73,8 @@ func RenderView(state Model, width int, height int, listHeight int, detailHeight
 	if width <= 0 {
 		width = 80
 	}
-	listHeight = vmax(1, listHeight)
-	detailHeight = vmax(1, detailHeight)
+	listHeight = max(1, listHeight)
+	detailHeight = max(1, detailHeight)
 
 	var b strings.Builder
 	b.WriteString(renderTopBar(state, width))
@@ -96,7 +96,7 @@ func renderThreadList(state Model, height int, width int) string {
 	if len(list) == 0 {
 		return normalizeBlock("No threads match current filters.", width, height)
 	}
-	height = vmax(1, height)
+	height = max(1, height)
 	pathCounts := summarizePaths(list)
 	start := threadListStart(list, state.listOffset, state.selectedThread, height)
 	lines := buildThreadListLines(list, start, height, width, state.selectedThread, pathCounts)
@@ -115,7 +115,7 @@ func threadListStart(list []threads.ReviewThread, desired, selected, height int)
 	// scrolls off the top and the pane looks frozen.
 	desired = clamp(desired, 0, selected)
 	start := selected
-	used := vmin(2, height) // the selected entry, plus its path header if it fits
+	used := min(2, height) // the selected entry, plus its path header if it fits
 	for candidate := selected - 1; candidate >= desired; candidate-- {
 		next := used + 2 // the candidate's entry, plus the header it now owns
 		if list[candidate].Path == list[candidate+1].Path {
@@ -322,7 +322,7 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	extrasHeight := 0
 	if extrasBlock != "" {
 		extrasLines := strings.Split(strings.TrimRight(extrasBlock, "\n"), "\n")
-		if maxExtras := vmax(1, height-2); len(extrasLines) > maxExtras {
+		if maxExtras := max(1, height-2); len(extrasLines) > maxExtras {
 			extrasLines = extrasLines[:maxExtras]
 			extrasBlock = strings.Join(extrasLines, "\n")
 		}
@@ -331,7 +331,7 @@ func renderDetailBlock(state Model, height int, width int, currentState State, r
 	// Never leave the detail without a line: at zero or less windowDetailBlock
 	// passes the content through unwindowed, and normalizeBlock would then keep
 	// its head and cut the prompt off the bottom.
-	detail = windowDetailBlock(detail, vmax(1, height-extrasHeight), anchor, currentState == StateReply)
+	detail = windowDetailBlock(detail, max(1, height-extrasHeight), anchor, currentState == StateReply)
 
 	content := strings.Join(filterEmptySections([]string{detail, extrasBlock}), "\n\n")
 	return normalizeBlock(content, width, height)
@@ -380,7 +380,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 	}
 	var b strings.Builder
 	lineCount := func() int { return strings.Count(b.String(), "\n") }
-	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%v %s", thread.Path, firstNonNilString(thread.Line, thread.OriginalLine), detailStatus(thread))))
+	b.WriteString(detailStyle.Render(fmt.Sprintf("%s:%s %s", thread.Path, formatThreadLines(*thread), detailStatus(thread))))
 	b.WriteString("\n")
 	if len(thread.Comments) == 0 {
 		return b.String(), anchor
@@ -392,7 +392,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 	if selected >= maxComments {
 		start = selected - maxComments + 1
 	}
-	end := vmin(len(thread.Comments), start+maxComments)
+	end := min(len(thread.Comments), start+maxComments)
 
 	for i := start; i < end; i++ {
 		comment := thread.Comments[i]
@@ -404,7 +404,7 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 		if i == selected {
 			headerMarker = selectedMarkerStyle.Render(" >")
 		}
-		indentWidth := vmax(2, lipgloss.Width(xansi.Strip(headerMarker)))
+		indentWidth := max(2, lipgloss.Width(xansi.Strip(headerMarker)))
 		bodyMarker := strings.Repeat(" ", indentWidth)
 		if i == selected {
 			anchor.start = lineCount()
@@ -472,11 +472,10 @@ func buildDetailContent(state Model, maxHeight int, currentState State, replyInp
 // Expanded fits as many as the pane height allows; collapsed is a compact peek
 // at the selected comment, and must never show more than expanded would.
 func detailCommentBudget(maxHeight int, expanded bool, total int) int {
-	budget := vmax(1, maxHeight/6)
 	if !expanded {
-		budget = 1
+		return 1
 	}
-	return vmax(1, vmin(total, budget))
+	return max(1, min(total, max(1, maxHeight/6)))
 }
 
 // windowDetailBlock scrolls content so the anchored range stays visible within
@@ -490,7 +489,7 @@ func windowDetailBlock(content string, height int, anchor detailAnchor, preferEn
 	if len(lines) <= height {
 		return content
 	}
-	end := vmin(anchor.end, len(lines))
+	end := min(anchor.end, len(lines))
 	start := end - height
 	if start > anchor.start && !preferEnd {
 		start = anchor.start
@@ -632,19 +631,8 @@ func renderHelp(width int) string {
 		}
 	}
 	content := b.String()
-	boxWidth := vmax(30, vmin(width-4, maxLineWidth(content)+4))
+	boxWidth := max(30, min(width-4, lipgloss.Width(content)+4))
 	return helpBoxStyle.Width(boxWidth).Render(content)
-}
-
-func maxLineWidth(text string) int {
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	maxWidth := 0
-	for _, line := range lines {
-		if w := lipgloss.Width(line); w > maxWidth {
-			maxWidth = w
-		}
-	}
-	return maxWidth
 }
 
 func centerBlock(text string, width int, height int) string {
@@ -671,15 +659,6 @@ func centerBlock(text string, width int, height int) string {
 		lines[i] = padOrTrim(padded, width)
 	}
 	return strings.Join(lines, "\n")
-}
-
-func firstNonNilString(values ...*int) string {
-	for _, v := range values {
-		if v != nil {
-			return fmt.Sprintf("%d", *v)
-		}
-	}
-	return "?"
 }
 
 func detailStatus(thread *threads.ReviewThread) string {
@@ -759,31 +738,6 @@ func sanitizeLine(text string) string {
 	return strings.ReplaceAll(text, "\n", " ")
 }
 
-func buildSingleLine(left, right string, width int) string {
-	if width <= 0 {
-		return sanitizeLine(left)
-	}
-	rightClean := sanitizeLine(right)
-	rightWidth := lipgloss.Width(rightClean)
-	space := 1
-	leftWidth := width - rightWidth - space
-	if leftWidth < 0 {
-		leftWidth = 0
-		space = 0
-	}
-	leftClean := ""
-	if leftWidth > 0 {
-		leftClean = padOrTrim(left, leftWidth)
-	}
-	var b strings.Builder
-	b.WriteString(leftClean)
-	if space > 0 {
-		b.WriteString(strings.Repeat(" ", space))
-	}
-	b.WriteString(rightClean)
-	return padOrTrim(b.String(), width)
-}
-
 func alignLeftRight(left, right string, width int) string {
 	if width <= 0 {
 		if left == "" {
@@ -818,16 +772,23 @@ func alignLeftRight(left, right string, width int) string {
 	return b.String()
 }
 
+// snippetDisplayLines syntax-highlights a snippet. The render is a chroma lex
+// plus a goldmark parse -- by far the most expensive thing in a frame -- and it
+// ran again on every keystroke, so it is memoised on the snippet's content just
+// like comment markdown.
 func snippetDisplayLines(snippet *threads.HistoricalSnippet) []string {
 	if snippet == nil || len(snippet.Lines) == 0 {
 		return nil
 	}
-	if lines, ok := highlightSnippet(snippet); ok {
-		return lines
-	}
-	copyLines := make([]string, len(snippet.Lines))
-	copy(copyLines, snippet.Lines)
-	return copyLines
+	key := snippet.Path + "\x00" + strings.Join(snippet.Lines, "\n")
+	return snippetCache.get(key, func() []string {
+		if lines, ok := highlightSnippet(snippet); ok {
+			return lines
+		}
+		copyLines := make([]string, len(snippet.Lines))
+		copy(copyLines, snippet.Lines)
+		return copyLines
+	})
 }
 
 func highlightSnippet(snippet *threads.HistoricalSnippet) ([]string, bool) {
@@ -947,37 +908,67 @@ func snippetLanguage(path string) string {
 	}
 }
 
-const markdownCacheLimit = 1024
-
-var (
-	markdownCacheMu sync.RWMutex
-	markdownCache   = make(map[string][]string, 64)
+const (
+	markdownCacheLimit = 1024
+	snippetCacheLimit  = 256
 )
 
-// cachedCommentMarkdown memoises renderCommentMarkdown, which costs a full
-// goldmark parse per call and ran once per visible thread and comment on every
-// frame. The renderer is a package-level singleton with WithWordWrap(0) and a
-// pinned colour profile, so its output depends on nothing but the body -- and
-// keying on the content rather than a comment ID means an edited comment can
-// never serve a stale render.
-func cachedCommentMarkdown(body string) []string {
-	markdownCacheMu.RLock()
-	lines, ok := markdownCache[body]
-	markdownCacheMu.RUnlock()
+// renderCache memoises expensive glamour renders by content. Both renderers are
+// package-level singletons with a fixed wrap and colour profile, so their output
+// depends on nothing but the key -- and keying on content rather than an ID
+// means an edited comment can never serve a stale render. A size cap bounds
+// growth over a session.
+type renderCache struct {
+	mu      sync.RWMutex
+	entries map[string][]string
+	limit   int
+}
+
+func newRenderCache(limit int) *renderCache {
+	return &renderCache{entries: make(map[string][]string, 64), limit: limit}
+}
+
+func (c *renderCache) get(key string, render func() []string) []string {
+	c.mu.RLock()
+	lines, ok := c.entries[key]
+	c.mu.RUnlock()
 	if !ok {
-		lines = renderCommentMarkdown(body)
-		markdownCacheMu.Lock()
-		if len(markdownCache) >= markdownCacheLimit {
-			markdownCache = make(map[string][]string, 64)
+		lines = render()
+		c.mu.Lock()
+		if len(c.entries) >= c.limit {
+			c.entries = make(map[string][]string, 64)
 		}
-		markdownCache[body] = lines
-		markdownCacheMu.Unlock()
+		c.entries[key] = lines
+		c.mu.Unlock()
 	}
 	// Callers receive a []string they may retain or mutate; never hand out the
 	// cached backing array.
 	out := make([]string, len(lines))
 	copy(out, lines)
 	return out
+}
+
+func (c *renderCache) size() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.entries)
+}
+
+func (c *renderCache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string][]string, 64)
+}
+
+var (
+	markdownCache = newRenderCache(markdownCacheLimit)
+	snippetCache  = newRenderCache(snippetCacheLimit)
+)
+
+// cachedCommentMarkdown memoises renderCommentMarkdown, which costs a full
+// goldmark parse and ran once per visible thread and comment on every frame.
+func cachedCommentMarkdown(body string) []string {
+	return markdownCache.get(body, func() []string { return renderCommentMarkdown(body) })
 }
 
 func renderCommentMarkdown(body string) []string {
@@ -1095,10 +1086,10 @@ func formatDiffHunk(diff string, targetNew *int, targetOld *int) []string {
 		}
 	}
 	start := 0
-	end := vmin(len(entries), 15)
+	end := min(len(entries), 15)
 	if len(highlightIdx) > 0 {
 		start = max(0, highlightIdx[0]-7)
-		end = vmin(len(entries), highlightIdx[len(highlightIdx)-1]+8)
+		end = min(len(entries), highlightIdx[len(highlightIdx)-1]+8)
 	}
 	if end-start > 15 {
 		end = start + 15
@@ -1137,40 +1128,26 @@ func parseHunkStart(meta string) (int, bool) {
 
 func sectionHeights(total int, listLines int) (int, int) {
 	if total <= 2 {
-		return 1, vmax(1, total-2)
+		return 1, max(1, total-2)
 	}
 	content := total - 2
 	divider := 1
 	if content <= divider {
-		return 1, vmax(1, content-divider)
+		return 1, max(1, content-divider)
 	}
 	content -= divider
 	if content < 2 {
 		return 1, 1
 	}
-	list := vmax(3, content*3/10)
+	list := max(3, content*3/10)
 	if list > content-3 {
-		list = vmax(1, content-3)
+		list = max(1, content-3)
 	}
-	maxList := vmax(1, listLines)
-	list = vmin(list, maxList)
+	maxList := max(1, listLines)
+	list = min(list, maxList)
 	if list >= content {
-		list = vmax(1, content-1)
+		list = max(1, content-1)
 	}
 	detail := content - list
 	return list, detail
-}
-
-func vmax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func vmin(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -382,9 +382,7 @@ func (s *Service) FetchData(
 			return nil, nil, fmt.Errorf("failed to refresh thread statuses: %w", err)
 		}
 		if includeHistory {
-			if failed, err := s.attachHistoricalSnippets(ctx, ghCtx, review); err != nil {
-				s.logf("Warning: could not load code context for %d file(s): %v", failed, err)
-			}
+			s.attachHistoricalSnippets(ctx, ghCtx, review)
 		}
 	}
 
@@ -456,9 +454,7 @@ func (s *Service) FetchReviewThreads(ctx context.Context, ghCtx Context, include
 	}
 
 	if includeHistory {
-		if failed, err := s.attachHistoricalSnippets(ctx, ghCtx, threads); err != nil {
-			s.logf("Warning: could not load code context for %d file(s): %v", failed, err)
-		}
+		s.attachHistoricalSnippets(ctx, ghCtx, threads)
 	}
 
 	return threads, nil
@@ -619,7 +615,7 @@ type fileKey struct {
 // decoration: a failed fetch degrades the output but is never fatal, so the
 // number of (commit, path) pairs that could not be read is reported alongside
 // the first error instead of aborting the whole command.
-func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) (int, error) {
+func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, threads []ReviewThread) {
 	var (
 		failed   int
 		firstErr error
@@ -659,7 +655,9 @@ func (s *Service) attachHistoricalSnippets(ctx context.Context, ghCtx Context, t
 			}
 		}
 	}
-	return failed, firstErr
+	if failed > 0 {
+		s.logf("Warning: could not load code context for %d file(s): %v", failed, firstErr)
+	}
 }
 
 func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit, path string) ([]string, error) {
@@ -667,9 +665,6 @@ func (s *Service) fetchLocalOrRemote(ctx context.Context, ghCtx Context, commit,
 		if lines, err := s.localRepo.FileLines(ctx, commit, path); err == nil && len(lines) > 0 {
 			return lines, nil
 		}
-	}
-	if s.remoteCache == nil {
-		return s.client.FileLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
 	}
 	lines, found, err := s.remoteCache.GetLines(ctx, ghCtx.Owner, ghCtx.Repo, commit, path)
 	if err != nil {

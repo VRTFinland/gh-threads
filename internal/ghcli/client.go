@@ -19,9 +19,7 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	c := &Client{}
-	c.exec = c.runGH
-	return c
+	return &Client{}
 }
 
 const blobQuery = `

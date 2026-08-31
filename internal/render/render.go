@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
@@ -98,7 +99,7 @@ func PrintSummary(w io.Writer, payload threads.Payload, opts Options) {
 			}
 
 			if commentIdx == 0 {
-				snippetOut.WriteTo(w)
+				_, _ = snippetOut.WriteTo(w)
 				if opts.ShowDiff {
 					diffLines := formatDiff(comment.DiffHunk, colour, comment.Line, comment.OriginalLine)
 					if len(diffLines) > 0 {
@@ -498,20 +499,6 @@ func clamp(value, minValue, maxValue int) int {
 	return max(minValue, min(maxValue, value))
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func ptr(value int) *int {
 	return &value
 }
@@ -739,19 +726,6 @@ func visibleWidth(text string) int {
 	return lipgloss.Width(text)
 }
 
-func padRight(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-	length := visibleWidth(text)
-	if length >= width {
-		return text
-	}
-	return text + strings.Repeat(" ", width-length)
-}
-
-var ansiEscapeRegexp = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
 func padRightVisible(text string, width int) string {
 	if width <= 0 {
 		return text
@@ -767,7 +741,7 @@ func padRightVisible(text string, width int) string {
 // on the raw string would treat an ANSI-coloured blank line as non-blank, which
 // made padding survive in colour mode but not when piped.
 func isVisuallyBlank(line string) bool {
-	return strings.TrimSpace(ansiEscapeRegexp.ReplaceAllString(line, "")) == ""
+	return strings.TrimSpace(ansi.Strip(line)) == ""
 }
 
 // compactSnippetLines trims blank padding from the ends of a rendered comment

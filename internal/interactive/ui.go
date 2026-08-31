@@ -160,9 +160,6 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewportHeight = msg.Height
 		m.viewportWidth = msg.Width
-		if msg.Width > 4 {
-			m.replyInput.SetWidth(msg.Width - 4)
-		}
 		listHeight, _ := sectionHeights(m.viewportHeight, listLineEstimate(m.state.FilteredThreads()))
 		m.state.SetListWindowSize(listHeight)
 		return m, nil
@@ -221,35 +218,11 @@ func (m *teaModel) updateView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.state = StateStatus
 		}
 	case "s":
-		m.state.errMessage = ""
-		m.state.state = StateFilter
-		m.inputPurpose = "status"
-		m.filterInput.Placeholder = "Filter by status (all/resolved/unresolved)"
-		m.filterInput.SetValue("")
-		m.authorSuggestionIndex = -1
-		m.statusSuggestionIndex = -1
-		m.filterInput.Focus()
-		return m, textinput.Blink
+		return m, m.openFilterPrompt("status", "Filter by status (all/resolved/unresolved)", "")
 	case "/":
-		m.state.errMessage = ""
-		m.state.state = StateFilter
-		m.inputPurpose = "text"
-		m.filterInput.Placeholder = "Filter by text"
-		m.filterInput.SetValue(m.state.filters.Text)
-		m.authorSuggestionIndex = -1
-		m.statusSuggestionIndex = -1
-		m.filterInput.Focus()
-		return m, textinput.Blink
+		return m, m.openFilterPrompt("text", "Filter by text", m.state.filters.Text)
 	case "a":
-		m.state.errMessage = ""
-		m.state.state = StateFilter
-		m.inputPurpose = "author"
-		m.filterInput.Placeholder = "Filter by author"
-		m.filterInput.SetValue("")
-		m.authorSuggestionIndex = -1
-		m.statusSuggestionIndex = -1
-		m.filterInput.Focus()
-		return m, textinput.Blink
+		return m, m.openFilterPrompt("author", "Filter by author", "")
 	case "f":
 		m.state.errMessage = ""
 		m.state.CycleStatusFilter()
@@ -283,6 +256,19 @@ func (m *teaModel) updateReply(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.replyInput, cmd = m.replyInput.Update(msg)
 	m.adjustReplyHeight()
 	return m, cmd
+}
+
+// openFilterPrompt puts the shared filter input into one of its three modes.
+func (m *teaModel) openFilterPrompt(purpose, placeholder, value string) tea.Cmd {
+	m.state.errMessage = ""
+	m.state.state = StateFilter
+	m.inputPurpose = purpose
+	m.filterInput.Placeholder = placeholder
+	m.filterInput.SetValue(value)
+	m.authorSuggestionIndex = -1
+	m.statusSuggestionIndex = -1
+	m.filterInput.Focus()
+	return textinput.Blink
 }
 
 func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -358,40 +344,32 @@ func (m *teaModel) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *teaModel) cycleAuthorSuggestion(delta int) bool {
-	suggestions := m.state.AuthorSuggestions(m.filterInput.Value(), authorSuggestionLimit)
-	if len(suggestions) == 0 {
-		m.authorSuggestionIndex = -1
+// cycleIndex moves a suggestion cursor by delta, wrapping around, and reports
+// whether a suggestion is now highlighted. Entering from -1 lands on the first
+// or last entry depending on direction.
+func cycleIndex(index *int, count, delta int) bool {
+	if count == 0 {
+		*index = -1
 		return false
 	}
-	if m.authorSuggestionIndex == -1 {
+	if *index == -1 {
 		if delta > 0 {
-			m.authorSuggestionIndex = 0
+			*index = 0
 		} else {
-			m.authorSuggestionIndex = len(suggestions) - 1
+			*index = count - 1
 		}
 		return true
 	}
-	m.authorSuggestionIndex = (m.authorSuggestionIndex + delta + len(suggestions)) % len(suggestions)
+	*index = (*index + delta + count) % count
 	return true
 }
 
+func (m *teaModel) cycleAuthorSuggestion(delta int) bool {
+	return cycleIndex(&m.authorSuggestionIndex, len(m.state.AuthorSuggestions(m.filterInput.Value(), authorSuggestionLimit)), delta)
+}
+
 func (m *teaModel) cycleStatusSuggestion(delta int) bool {
-	suggestions := statusSuggestions(m.filterInput.Value())
-	if len(suggestions) == 0 {
-		m.statusSuggestionIndex = -1
-		return false
-	}
-	if m.statusSuggestionIndex == -1 {
-		if delta > 0 {
-			m.statusSuggestionIndex = 0
-		} else {
-			m.statusSuggestionIndex = len(suggestions) - 1
-		}
-		return true
-	}
-	m.statusSuggestionIndex = (m.statusSuggestionIndex + delta + len(suggestions)) % len(suggestions)
-	return true
+	return cycleIndex(&m.statusSuggestionIndex, len(statusSuggestions(m.filterInput.Value())), delta)
 }
 
 func (m *teaModel) chooseStatusFilter(value string) (threads.StatusFilter, bool) {
@@ -491,17 +469,10 @@ func (m *teaModel) View() string {
 func (m *teaModel) adjustReplyHeight() {
 	content := m.replyInput.Value()
 	lines := strings.Count(content, "\n") + 1
-	minLines := 1
 	if content != "" && lines < 2 {
-		lines = 2
+		lines = 2 // leave room for the newline enter will insert
 	}
-	if lines < minLines {
-		lines = minLines
-	}
-	if lines > m.replyInput.MaxHeight {
-		lines = m.replyInput.MaxHeight
-	}
-	m.replyInput.SetHeight(lines)
+	m.replyInput.SetHeight(min(lines, m.replyInput.MaxHeight))
 }
 
 type replyFinished struct{ err error }

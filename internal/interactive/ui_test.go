@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/VRTFinland/gh-threads/internal/threads"
 )
@@ -159,7 +160,7 @@ func TestUpdateFilterRejectsUnknownStatus(t *testing.T) {
 	if !strings.Contains(tm.state.errMessage, "unknown status") {
 		t.Fatalf("expected an error message, got %q", tm.state.errMessage)
 	}
-	if bar := stripANSI(renderBottomBar(tm.state, 200)); !strings.Contains(bar, "unknown status") {
+	if bar := ansi.Strip(renderBottomBar(tm.state, 200)); !strings.Contains(bar, "unknown status") {
 		t.Fatalf("expected the message to be visible in the bottom bar, got %q", bar)
 	}
 }

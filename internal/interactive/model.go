@@ -238,13 +238,6 @@ func clamp(value, minVal, maxVal int) int {
 	return value
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func (m *Model) SetListWindowSize(size int) {
 	if size < 1 {
 		size = 1

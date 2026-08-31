@@ -306,8 +306,6 @@ func TestPrintCommentBlock_ReportsWhetherItPrinted(t *testing.T) {
 	}
 }
 
-func intPtr(v int) *int { return &v }
-
 func TestCommentLineRange(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -317,35 +315,35 @@ func TestCommentLineRange(t *testing.T) {
 		{
 			name: "prefers the original pair over the current one",
 			comment: threads.ThreadComment{
-				Line: intPtr(118), StartLine: intPtr(116),
-				OriginalLine: intPtr(120), OriginalStartLine: intPtr(115),
+				Line: ptr(118), StartLine: ptr(116),
+				OriginalLine: ptr(120), OriginalStartLine: ptr(115),
 			},
-			start: intPtr(115), end: intPtr(120),
+			start: ptr(115), end: ptr(120),
 		},
 		{
 			name: "outdated comment with no current lines",
 			comment: threads.ThreadComment{
-				OriginalLine: intPtr(120), OriginalStartLine: intPtr(115),
+				OriginalLine: ptr(120), OriginalStartLine: ptr(115),
 			},
-			start: intPtr(115), end: intPtr(120),
+			start: ptr(115), end: ptr(120),
 		},
 		{
 			name:    "falls back to the current pair without an original line",
-			comment: threads.ThreadComment{Line: intPtr(40), StartLine: intPtr(38)},
-			start:   intPtr(38), end: intPtr(40),
+			comment: threads.ThreadComment{Line: ptr(40), StartLine: ptr(38)},
+			start:   ptr(38), end: ptr(40),
 		},
 		{
 			name:    "single line comment",
-			comment: threads.ThreadComment{OriginalLine: intPtr(12)},
-			start:   intPtr(12), end: intPtr(12),
+			comment: threads.ThreadComment{OriginalLine: ptr(12)},
+			start:   ptr(12), end: ptr(12),
 		},
 		{
 			name: "derives the start from the span for a cached comment",
 			comment: threads.ThreadComment{
-				Line: intPtr(118), StartLine: intPtr(116),
-				OriginalLine: intPtr(120),
+				Line: ptr(118), StartLine: ptr(116),
+				OriginalLine: ptr(120),
 			},
-			start: intPtr(118), end: intPtr(120),
+			start: ptr(118), end: ptr(120),
 		},
 		{
 			name:    "no line information at all",
@@ -378,8 +376,8 @@ func derefOrNil(v *int) any {
 func TestRenderCommentSnippet_MultiLineSuggestionUsesOriginalRange(t *testing.T) {
 	body := "```suggestion\nreplacement\n```"
 	comment := threads.ThreadComment{
-		Line: intPtr(17), StartLine: intPtr(16),
-		OriginalLine: intPtr(12), OriginalStartLine: intPtr(11),
+		Line: ptr(17), StartLine: ptr(16),
+		OriginalLine: ptr(12), OriginalStartLine: ptr(11),
 	}
 	snippet := &threads.HistoricalSnippet{
 		Commit: "abcdef123", Path: "file.go", StartLine: 10, HighlightLine: 12,
