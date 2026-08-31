@@ -6,6 +6,7 @@
 ## Build, Test, and Development Commands
 - `go run ./cmd/gh-threads --repo owner/name 13533 --format summary --show-diff` — quickest way to exercise the CLI; swap flags to inspect JSON, colour, markdown, or cache invalidation behaviours.
 - `go run ./cmd/gh-threads --interactive --repo owner/name 13533` — smoke-test the Bubble Tea UI and keyboard handling (refer to README for bindings).
+- `make check` — `go vet ./...` plus `go test ./...`; the standard gate before committing (`make test` runs tests only).
 - `go test ./...` — run the Go unit tests (covers cache/service logic plus interactive helpers); keep suites hermetic by stubbing `ghcli` interactions.
 - `go build ./cmd/gh-threads` — ensure binaries embed cleanly before publishing or installing as a `gh` extension.
 
@@ -13,7 +14,15 @@
 All code should be `gofmt`/`goimports` clean with idiomatic naming: exported types and constructors use `PascalCase`, private helpers use `camelCase`, and package names stay `lowercase`. Prefer small, pure helpers for filtering/sorting data (see `internal/threads/filter.go`) and keep context-aware methods taking a `context.Context`. Interactive UI helpers should be prefixed with their function (`renderThreadList`, `renderDetailBlock`) and rendering logic should flow through Glamour/Lip Gloss utilities for consistent styling. Avoid pulling new dependencies unless every extension user benefits.
 
 ## Testing Guidelines
-Use the existing Go test layout under `internal/`: e.g., extend `internal/threads/service_test.go` when touching cache/service behaviour, and `internal/interactive/*_test.go` for model or rendering helpers. Prefer table-driven tests, stub the `ghcli.Client` interface to avoid network calls, and keep interactive tests deterministic by bypassing Bubble Tea event loops. Run `go test ./...` locally before pushing; if you rely on manual CLI checks (`go run ./cmd/gh-threads ...`), summarize the command/output in the PR.
+Use the existing Go test layout under `internal/`: e.g., extend `internal/threads/service_test.go` when touching cache/service behaviour, and `internal/interactive/*_test.go` for model or rendering helpers. Prefer table-driven tests, stub the `ghcli.Client` interface to avoid network calls, and keep interactive tests deterministic by bypassing Bubble Tea event loops. Build the service with `NewService(...)` rather than a `Service` struct literal: it wires `gitremote.Cache`, and the remote-fetch path is otherwise never exercised by a fake client. `ghcli.Client` is stubbed through its unexported `exec` field. Run `make check` locally before pushing; if you rely on manual CLI checks (`go run ./cmd/gh-threads ...`), summarize the command/output in the PR.
+
+## Gotchas
+- Terminal text: measure with `lipgloss.Width`, truncate with `x/ansi`'s `Truncate`/`Strip`. `utf8.RuneCountInString` and rune slicing miscount ANSI escapes and double-width runes, and can cut mid-escape.
+- Line anchors: GitHub returns `line`/`startLine` (current diff) and `originalLine`/`originalStartLine` (original commit). Use one pair or the other, never a field from each; snippets are built in the original space.
+- Adding a persisted field to `ThreadComment`/`ReviewThread` means: GraphQL query, the `gh*` struct, the public type, and a `cacheVersion` bump in `internal/threads/cache.go`.
+- `View()` runs on every keystroke: route any new Glamour render through `renderCache` in `internal/interactive/view.go` (an uncached snippet highlight costs ~1.8 ms per frame).
+- Never write to stderr while the TUI holds the alt screen; `internal/app` mutes the service with `SetLogWriter(io.Discard)`.
+- Snippets are decoration: `attachHistoricalSnippets` logs and continues. Never let a snippet fetch abort a command.
 
 ## Commit & Pull Request Guidelines
 Commits stay short and imperative (e.g., "Add cache busting flag") with diffs scoped to a single concern. PR descriptions must explain the problem, approach, and list validation commands (`go test ./...`, any `go run ./cmd/gh-threads ...` scenarios, plus manual interactive runs when applicable). Link the related issue, attach screenshots or transcripts for UI tweaks, and mention GitHub API rate-limit considerations if you touched polling/caching.
